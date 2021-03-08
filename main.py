@@ -102,6 +102,28 @@ try:
         elif command[0] == "CLEAR":
             plt.close("all")
 
+        # Help
+        elif command[0] == "HELP" or command[0] == "H":
+
+            # Print commands
+            print("\nAvailable commands:")
+            print("\tHELP or H: Print help")
+            print("\tSWEEP or START: Sweep control voltage (triangle wave)")
+            print("\tPULSE: Pulse control voltage (square wave)")
+            print("\tINFO: Print all parameters")
+            print("\tSTATUS: Print scan status")
+            print("\tPLOT: Plot I-V curve")
+            print("\tCLEAR: Clear all plots")
+            print("\tSTOP or EXIT or Q: Close connection")
+
+            # Print parameters
+            print("\nAvailable parameters:")
+            print("\tVMIN <value>: Minimum control voltage for sweep or pulse, in [V]")
+            print("\tVMAX <value>: Maximum control voltage for sweep or pulse, in [V]")
+            print("\tPERIOD <value>: Period of sweep or pulse, in [s]")
+            print("\tSAMPLE_RATE <value>: Sample rate for control voltage sweep or pulse, in [Hz]")
+            print("")
+
         # Stop
         elif command[0] == "STOP" or command[0] == "EXIT" or command[0] == "Q":
             break
