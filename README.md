@@ -1,7 +1,11 @@
-SIS Bias Control
-================
+Receiver Lab: SIS Bias Control
+==============================
 
-Control SIS bias via MCC DAQ device.
+*Control SIS bias via MCC DAQ device*
+
+This package contains code to control the bias voltage of an SIS mixer using an MCC DAQ device. It can also be used to read the voltage and current monitors in order to record a current-voltage (I-V) curve.
+
+This package is used by the Receiver Lab (Submillimeter Array) to test SIS mixers in the lab.
 
 Installation
 ------------
