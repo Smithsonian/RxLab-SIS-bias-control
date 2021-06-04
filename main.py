@@ -38,13 +38,13 @@ try:
             param[command[0]] = float(command[1])
 
         # SWEEP / START: Sweep control voltage
-        elif command[0] == "SWEEP" or command[0] == "START":
+        elif command[0] == "SWEEP" or command[0] == "START" or command[0] == "S":
             bias.sweep_control_voltage(vmin=param['VMIN'],
                                        vmax=param['VMAX'],
                                        period=param['PERIOD'],
                                        sample_rate=param['SAMPLE_RATE'])
-            # bias.start_iv_monitor_scan(period=param['PERIOD'],
-            #                            sample_rate=param['SAMPLE_RATE'])
+            bias.start_iv_monitor_scan(period=param['PERIOD'],
+                                       sample_rate=param['SAMPLE_RATE'])
 
         # PULSE: Pulse control voltage
         elif command[0] == "PULSE":
@@ -53,8 +53,8 @@ try:
                                        vmax=param['VMAX'],
                                        period=param['PERIOD'],
                                        sample_rate=param['SAMPLE_RATE'])
-            # bias.start_iv_monitor_scan(period=param['PERIOD'],
-            #                            sample_rate=param['SAMPLE_RATE'])
+            bias.start_iv_monitor_scan(period=param['PERIOD'],
+                                       sample_rate=param['SAMPLE_RATE'])
 
         # VSET: Set constant control voltage
         elif command[0] == "VSET":
@@ -85,7 +85,7 @@ try:
             print(f"\n\tScanning: {bias.ao_scan_status() == 1}\n")
 
         # PLOT: Plot I-V curve
-        elif command[0] == "PLOT":
+        elif command[0] == "PLOT" or command[0] == "P":
             if not bias.ao_scan_status():
                 print("You haven't started scanning yet...")
 
@@ -124,7 +124,7 @@ try:
             #     plt.pause(0.1)
 
         # CLEAR: Clear all plots
-        elif command[0] == "CLEAR":
+        elif command[0] == "CLEAR" or command[0] == "C":
             plt.close("all")
 
         # HELP: Print help
@@ -133,15 +133,15 @@ try:
             # Commands
             print("\n\tAvailable commands:")
             print("\t\tHELP or H: Print help")
-            print("\t\tSWEEP or START: Sweep control voltage (triangle wave)")
+            print("\t\tSWEEP or START or S: Sweep control voltage (triangle wave)")
             print("\t\tPULSE: Pulse control voltage (square wave)")
             print("\t\tVSET: Set constant control voltage")
             print("\t\tVMON: Read voltage monitor")
             print("\t\tIMON: Read current monitor")
             print("\t\tINFO: Print all parameters")
             print("\t\tSTATUS: Print scan status")
-            print("\t\tPLOT: Plot I-V curve")
-            print("\t\tCLEAR: Clear all plots")
+            print("\t\tPLOT or P: Plot I-V curve")
+            print("\t\tCLEAR or C: Clear all plots")
             print("\t\tSTOP or EXIT or Q: Close connection")
 
             # Parameters
