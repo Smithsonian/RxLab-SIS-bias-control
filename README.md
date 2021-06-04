@@ -54,15 +54,17 @@ With `main.py` running, type in "HELP" or "H" to see the available commands.
 
 ```bash
 >> HELP
-
 Available commands:
 	HELP or H: Print help
-	SWEEP or START: Sweep control voltage (triangle wave)
+	SWEEP or START or S: Sweep control voltage (triangle wave)
 	PULSE: Pulse control voltage (square wave)
+	VSET: Set constant control voltage
+	VMON: Read voltage monitor
+	IMON: Read current monitor
 	INFO: Print all parameters
 	STATUS: Print scan status
-	PLOT: Plot I-V curve
-	CLEAR: Clear all plots
+	PLOT or P: Plot I-V curve
+	CLEAR or C: Clear all plots
 	STOP or EXIT or Q: Close connection
 
 Available parameters:
