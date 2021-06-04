@@ -89,39 +89,7 @@ try:
             if not bias.ao_scan_status():
                 print("You haven't started scanning yet...")
 
-            fig, ax = plt.subplots()
-            ax.set_xlabel("Voltage (mV)")
-            ax.set_ylabel("Current (uA)")
-            ax.set_title("SIS bias control")
-
-            # Once
-            npts = 5000
-            voltage, current = np.empty(npts), np.empty(npts)
-            for i in range(npts):
-                voltage[i] = bias.read_voltage()
-                current[i] = bias.read_current()
-            # voltage, current
-            # data_in = list(self.analog_input)
-            # voltage, current = data_in[::2], data_in[1::2]
-            ax.plot(voltage, current, 'ko', alpha=0.2, ms=1)
-            plt.show()
-
-            # # plt.show(False)
-            # plt.draw()
-
-            # points = ax.plot([0], [0], 'ko', alpha=0.2, ms=1)[0]
-
-            # for _ in range(10):
-            #     npts = 500
-            #     voltage, current = np.empty(npts), np.empty(npts)
-            #     for i in range(npts):
-            #         voltage[i] = bias.read_voltage()
-            #         current[i] = bias.read_current()
-            #         time.sleep(0.001)
-            #     # plt.plot(voltage, current, 'ko', alpha=0.2, ms=1)
-            #     points.set_data(voltage, current)
-            #     fig.canvas.draw()
-            #     plt.pause(0.1)
+            bias.plot(mode="once")
 
         # CLEAR: Clear all plots
         elif command[0] == "CLEAR" or command[0] == "C":
