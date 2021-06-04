@@ -112,6 +112,11 @@ class SISBias:
 
         """
 
+        # Stop current scan
+        self.update_ao_scan_status()
+        if self._ao_scan_status == ScanStatus.RUNNING:
+            self.ao_device.scan_stop()
+
         if voltage >= 0:
             self.ao_device.a_out(VCTRL_N_CHANNEL, AO_RANGE, AO_FLAG, 0.0)
             self.ao_device.a_out(VCTRL_P_CHANNEL, AO_RANGE, AO_FLAG, voltage)
@@ -224,13 +229,13 @@ class SISBias:
                                          AO_RANGE, samples_per_channel, sample_rate,
                                          SCAN_OPTIONS, SCAN_FLAGS, output_buffer)
 
-        print("\nSweeping control voltage:")
-        print(f'    {self.daq_name}: ready')
-        print(f'    Sweep frequency: {1 / period} Hz')
-        print(f'    Range: {AO_RANGE.name}')
-        print(f'    Samples per channel: {samples_per_channel}')
-        print(f'    Sample Rate: {sample_rate} Hz')
-        print(f'    Actual sample rate: {rate} Hz\n')
+        print("\n\tSweeping control voltage:")
+        print(f'\t\t{self.daq_name}: ready')
+        print(f'\t\tSweep frequency: {2 / period:.1f} Hz')
+        print(f'\t\tRange: {AO_RANGE.name}')
+        print(f'\t\tSamples per channel: {samples_per_channel:d}')
+        print(f'\t\tSample Rate: {sample_rate:.1f} Hz')
+        print(f'\t\tActual sample rate: {rate:.1f} Hz\n')
 
     # Read voltage & current monitor ------------------------------------- ###
 
@@ -242,7 +247,10 @@ class SISBias:
 
         """
         
-        # TODO: stop read sweep if necessary
+        # Stop current scan
+        self.update_ai_scan_status()
+        if self._ai_scan_status == ScanStatus.RUNNING:
+            self.ai_device.scan_stop()
 
         return (self._read_analog(VMON_AI_CHANNEL) - VMON_OFFSET) / VMON_GAIN * 1e3
         
@@ -254,19 +262,22 @@ class SISBias:
 
         """
         
-        # TODO: stop read sweep if necessary
+        # Stop current scan
+        self.update_ai_scan_status()
+        if self._ai_scan_status == ScanStatus.RUNNING:
+            self.ai_device.scan_stop()
 
         return (self._read_analog(IMON_AI_CHANNEL) - IMON_OFFSET) / IMON_GAIN * 1e6
     
-    def read_sweep(self):
+    # def read_sweep(self):
 
-        # TODO: implement
+    #     # TODO: implement
         
-        # Analog input from voltage / current monitors
-        data_in = list(self.analog_input)
-        voltage, current = data_in[::2], data_in[1::2]
+    #     # Analog input from voltage / current monitors
+    #     data_in = list(self.analog_input)
+    #     voltage, current = data_in[::2], data_in[1::2]
 
-        # Compensate
+    #     # Compensate
 
     def _read_analog(self, channel):
         """Read analog input channel.
@@ -308,13 +319,13 @@ class SISBias:
                                         sample_rate, SCAN_OPTIONS,
                                         AI_SCAN_FLAG, self.analog_input)
 
-        print("\nReading voltage & current monitors:")
-        print(f'    {self.daq_name}: ready')
-        print(f'    Sweep frequency: {1 / period} Hz')
-        print(f'    Range: {AI_RANGE.name}')
-        print(f'    Samples per channel: {samples_per_channel}')
-        print(f'    Sample Rate: {sample_rate} Hz')
-        print(f'    Actual sample rate: {rate} Hz\n')
+        print("\n\tReading voltage & current monitors:")
+        print(f'\t\t{self.daq_name}: ready')
+        print(f'\t\tSweep frequency: {2 / period:.1f} Hz')
+        print(f'\t\tRange: {AI_RANGE.name}')
+        print(f'\t\tSamples per channel: {samples_per_channel:d}')
+        print(f'\t\tSample Rate: {sample_rate:.1f} Hz')
+        print(f'\t\tActual sample rate: {rate:.1f} Hz\n')
 
     # Plot --------------------------------------------------------------- ###
 
