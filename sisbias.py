@@ -161,7 +161,7 @@ class SISBias:
         vctrl[1::2] = vctrl_p
 
         # Start analog output scan
-        self._scan_control_voltage(vctrl, period=period, sample_rate=sample_rate)
+        self._sweep_control_voltage(vctrl, period=period, sample_rate=sample_rate)
 
     def pulse_control_voltage(self, vmin=0.0, vmax=1.0, period=0.1, sample_rate=10000):
         """Pulse control voltage (square wave).
@@ -196,10 +196,10 @@ class SISBias:
         vctrl[1::2] = vctrl_p
 
         # Start analog output scan
-        self._scan_control_voltage(vctrl, period=period, sample_rate=sample_rate)
+        self._sweep_control_voltage(vctrl, period=period, sample_rate=sample_rate)
 
-    def _scan_control_voltage(self, voltage, period=5.0, sample_rate=1000):
-        """Setup control voltage scan.
+    def _sweep_control_voltage(self, voltage, period=5.0, sample_rate=1000):
+        """Sweep control voltage.
 
         Args:
             voltage (np.ndarray): voltage array for buffer
@@ -269,15 +269,23 @@ class SISBias:
 
         return (self._read_analog(IMON_AI_CHANNEL) - IMON_OFFSET) / IMON_GAIN * 1e6
     
-    # def read_sweep(self):
+    def read_iv_curve(self):
+        """Read I-V curve.
 
-    #     # TODO: implement
-        
-    #     # Analog input from voltage / current monitors
-    #     data_in = list(self.analog_input)
-    #     voltage, current = data_in[::2], data_in[1::2]
+        Returns:
+            voltage in V and current in A
 
-    #     # Compensate
+        """
+
+        # Analog input from voltage / current monitors
+        data_in = list(self.analog_input)
+        voltage, current = np.array(data_in[::2]), np.array(data_in[1::2])
+
+        # Calibrate to V / A
+        voltage = (voltage - VMON_OFFSET) / VMON_GAIN
+        current = (current - IMON_OFFSET) / IMON_GAIN
+
+        return voltage, current
 
     def _read_analog(self, channel):
         """Read analog input channel.
@@ -329,19 +337,41 @@ class SISBias:
 
     # Plot --------------------------------------------------------------- ###
 
-    def plot(self):
+    def plot(self, mode="once"):
+        """Plot I-V curve."""
 
-        # TODO: fix
+        fig, ax = plt.subplots()
+        ax.set_xlabel("Voltage (mV)")
+        ax.set_ylabel("Current (uA)")
+        ax.set_title("SIS bias control")
 
-        data_in = list(self.analog_input)
-        v, i = data_in[::2], data_in[1::2]
+        # Once
+        if mode == "once":
+            voltage, current = bias.read_iv_curve()
+            ax.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
+            plt.show()
+            return
 
-        plt.figure()
-        plt.ion()
-        plt.plot(v, i)
-        plt.show()
+        # TODO: allow to run continuously
 
-    # Misc --------------------------------------------------------------- ###
+        # # plt.show(False)
+        # plt.draw()
+
+        # points = ax.plot([0], [0], 'ko', alpha=0.2, ms=1)[0]
+
+        # for _ in range(10):
+        #     npts = 500
+        #     voltage, current = np.empty(npts), np.empty(npts)
+        #     for i in range(npts):
+        #         voltage[i] = bias.read_voltage()
+        #         current[i] = bias.read_current()
+        #         time.sleep(0.001)
+        #     # plt.plot(voltage, current, 'ko', alpha=0.2, ms=1)
+        #     points.set_data(voltage, current)
+        #     fig.canvas.draw()
+        #     plt.pause(0.1)    
+
+    # Scan status -------------------------------------------------------- ###
     
     def ao_scan_status(self):
         """Return scan status."""
@@ -364,6 +394,8 @@ class SISBias:
         """Update scan status."""
 
         self._ai_scan_status, self._ai_transfer_status = self.ai_device.get_scan_status()
+
+    # Stop --------------------------------------------------------------- ###
 
     def stop(self):
         """Stop DAQ device and close all connections."""
@@ -389,25 +421,3 @@ class SISBias:
             print("done\n")
         except uldaq.ul_exception.ULException:
             print("\nDevice already disconnected\n")
-
-
-if __name__ == "__main__":
-        
-    bias = SISBias()
-    # bias.sweep_voltage(-2, 2, 5)
-    # time.sleep(0.1)
-
-    # fig, ax = plt.subplots()
-    # ax.set_xlabel("Voltage (mV)")
-    # ax.set_ylabel("Current (uA)")
-    # ax.set_title("SIS bias control")
-
-    # npts = 5000
-    # voltage, current = np.empty(npts), np.empty(npts)
-    # for i in range(npts):
-    #     voltage[i] = bias.read_voltage()
-    #     current[i] = bias.read_current()
-    # plt.plot(voltage, current, 'ko', alpha=0.2, ms=1)
-    # plt.show()
-
-    # bias.stop()
