@@ -1,7 +1,7 @@
 Receiver Lab: SIS Bias Control
 ==============================
 
-*Control SIS bias via MCC DAQ device*
+*Control the SIS bias via the MCC DAQ device*
 
 This package contains code to control the bias voltage of an SIS mixer using an MCC DAQ device. It can also be used to read the voltage and current monitors in order to record a current-voltage (I-V) curve.
 
@@ -10,7 +10,7 @@ This package is used by the Receiver Lab (Submillimeter Array) to test SIS mixer
 Installation
 ------------
 
-Install [MCC Universal Library for Linux (uldaq)](https://github.com/mccdaq/uldaq). For macOS:
+Install the [MCC Universal Library for Linux (uldaq)](https://github.com/mccdaq/uldaq). For macOS:
 ```bash
 # Install X-code tools
 xcode-select --install
@@ -33,7 +33,7 @@ pip install uldaq
 ```
 See [uldaq webpage](https://github.com/mccdaq/uldaq) for other platforms.
 
-Download this package:
+Then you can download this package:
 ```bash
 git clone https://github.com/Smithsonian/RxLab-SIS-bias
 cd RxLab-SIS-bias
@@ -50,7 +50,7 @@ I also provide an interactive script `main.py` to make things easier.
 python main.py
 ```
 
-With `main.py` running, type in "HELP" or "H" to see the available commands.
+With `main.py` running, type in "HELP" to see the available commands.
 
 ```bash
 >> HELP
