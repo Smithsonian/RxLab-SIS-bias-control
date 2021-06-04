@@ -28,8 +28,10 @@ AI_FLAG = AInFlag.DEFAULT
 AI_SCAN_FLAG = AInScanFlag.DEFAULT
 VMON_AI_CHANNEL = 0
 IMON_AI_CHANNEL = 1
-VMON_CONV_MV = 5
-IMON_CONV_UA = 5 / 10 * 1000
+VMON_GAIN = 10 * -5 * -2
+IMON_GAIN = 10 * -1 * -15 * 10
+VMON_OFFSET = 0  # -1.20
+IMON_OFFSET = 0  # -1.20
 
 
 class SISBias:
@@ -109,7 +111,7 @@ class SISBias:
             voltage: control voltage
 
         """
-        
+
         if voltage >= 0:
             self.ao_device.a_out(VCTRL_N_CHANNEL, AO_RANGE, AO_FLAG, 0.0)
             self.ao_device.a_out(VCTRL_P_CHANNEL, AO_RANGE, AO_FLAG, voltage)
@@ -240,7 +242,9 @@ class SISBias:
 
         """
         
-        return self._read_analog(VMON_AI_CHANNEL) * VMON_CONV_MV
+        # TODO: stop read sweep if necessary
+
+        return (self._read_analog(VMON_AI_CHANNEL) - VMON_OFFSET) / VMON_GAIN * 1e3
         
     def read_current(self):
         """Read current monitor.
@@ -250,8 +254,20 @@ class SISBias:
 
         """
         
-        return self._read_analog(IMON_AI_CHANNEL) * IMON_CONV_UA
+        # TODO: stop read sweep if necessary
+
+        return (self._read_analog(IMON_AI_CHANNEL) - IMON_OFFSET) / IMON_GAIN * 1e6
     
+    def read_sweep(self):
+
+        # TODO: implement
+        
+        # Analog input from voltage / current monitors
+        data_in = list(self.analog_input)
+        voltage, current = data_in[::2], data_in[1::2]
+
+        # Compensate
+
     def _read_analog(self, channel):
         """Read analog input channel.
 
@@ -347,7 +363,7 @@ class SISBias:
         """Stop DAQ device and close all connections."""
         
         try:
-            print("Closing connection to DAQ device ... ", end='')
+            print("\nClosing connection to DAQ device ... ", end='')
             if self.daq_device:
                 self.update_ao_scan_status()
                 # Stop the scan
@@ -361,7 +377,7 @@ class SISBias:
                 self.daq_device.release()
             print("done\n")
         except uldaq.ul_exception.ULException:
-            print("device already disconnected\n")
+            print("\nDevice already disconnected\n")
 
 
 if __name__ == "__main__":
