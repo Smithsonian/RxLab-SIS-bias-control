@@ -28,6 +28,8 @@ try:
         # Get command
         command = input(">> ")
         command = command.split()
+        if len(command) == 0:
+            continue
         if not isinstance(command, list):
             command = [command,]
         command[0] = command[0].upper()
@@ -35,7 +37,12 @@ try:
         # Process command
         # If parameter, set parameter
         if command[0] in param.keys():
-            param[command[0]] = float(command[1])
+            try:
+                param[command[0]] = float(command[1])
+            except IndexError:
+                print("Error: parameter not set")
+                continue
+
 
         # SWEEP / START: Sweep control voltage
         elif command[0] == "SWEEP" or command[0] == "START" or command[0] == "S":
@@ -90,6 +97,14 @@ try:
                 print("You haven't started scanning yet...")
 
             bias.plot(mode="once")
+
+        # RESISTANCE or R: Get resistance of I-V curve
+        elif command[0] == "RESISTANCE" or command[0] == "R":
+            voltage, current = bias.read_iv_curve()
+            p = np.polyfit(voltage, current, 1)
+            print(f"\n\tResistance: {1/p[0]:.2f} ohms")
+            current_std = np.std(current - np.polyval(p, voltage))
+            print(f"\tCurrent std. dev.: {current_std:.1e} A\n")
 
         # CLEAR: Clear all plots
         elif command[0] == "CLEAR" or command[0] == "C":
