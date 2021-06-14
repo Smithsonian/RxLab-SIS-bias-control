@@ -5,3 +5,5 @@ __pycache__/
 examples/
 
 sis_bias.py.bak
+
+tmp-*
