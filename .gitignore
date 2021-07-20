@@ -3,7 +3,10 @@
 __pycache__/
 
 mcc-examples/
+old/
 
 sis_bias.py.bak
 
 tmp-*
+
+params.json
