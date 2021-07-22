@@ -21,7 +21,7 @@ SCAN_FLAGS = AOutScanFlag.DEFAULT
 
 # DAQ input Channels
 AI_MODE = AiInputMode.DIFFERENTIAL
-AI_RANGE = Range.BIP2VOLTS
+AI_RANGE = Range.BIP5VOLTS
 AI_FLAG = AInFlag.DEFAULT
 AI_SCAN_FLAG = AInScanFlag.DEFAULT
 
@@ -125,8 +125,8 @@ class SISBias:
             self.ao_device.a_out(self.params['VCTRL_N_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
             self.ao_device.a_out(self.params['VCTRL_P_CHANNEL'], AO_RANGE, AO_FLAG, voltage)
         else:
-            self.ao_device.a_out(self.params['VCTRL_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
             self.ao_device.a_out(self.params['VCTRL_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
+            self.ao_device.a_out(self.params['VCTRL_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
     
     def sweep_control_voltage(self, vmin=-1.0, vmax=1.0, npts=1000, sweep_period=5.0, verbose=True):
         """Sweep control voltage (triangle wave).
@@ -153,7 +153,7 @@ class SISBias:
             self.ao_device.scan_stop()
 
         # Build control voltage (triangle wave)
-        vctrl_up = np.linspace(-vmax, -vmin, samples_per_channel // 2)
+        vctrl_up = np.linspace(vmin, vmax, samples_per_channel // 2)
         vctrl_down = vctrl_up[::-1]
         vctrl = np.r_[vctrl_up, vctrl_down]
         vctrl = np.roll(vctrl, int(len(vctrl) / 4))
@@ -230,8 +230,9 @@ class SISBias:
             output_buffer[i] = voltage[i]
 
         # Start the output scan.
-        rate = self.ao_device.a_out_scan(self.params['VCTRL_N_CHANNEL'], 
-                                         self.params['VCTRL_P_CHANNEL'],
+        ao_chan_min = min(self.params['VCTRL_N_CHANNEL'], self.params['VCTRL_P_CHANNEL'])
+        ao_chan_max = max(self.params['VCTRL_N_CHANNEL'], self.params['VCTRL_P_CHANNEL'])
+        rate = self.ao_device.a_out_scan(ao_chan_min, ao_chan_max,
                                          AO_RANGE, samples_per_channel, sample_frequency,
                                          SCAN_OPTIONS, SCAN_FLAGS, output_buffer)
 
