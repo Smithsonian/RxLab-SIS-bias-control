@@ -100,7 +100,7 @@ class SISBias:
     # Set control voltage ------------------------------------------------ ###
 
     def set_control_voltage(self, voltage, vmax=3):
-        """Set control voltage to a constant value (not swept).
+        """Set control voltage to a constant value (no sweep).
 
         Uses two channels to create a differential output (to allow negative
         control voltages).
@@ -115,10 +115,13 @@ class SISBias:
         if self._ao_scan_status == ScanStatus.RUNNING:
             self.ao_device.scan_stop()
 
-        # Check if in limits
+        # Check if within limits
+        msg = "\t\t** warning: control voltage beyond limits ** "
         if voltage > vmax:
+            print(msg)
             voltage = vmax
         elif voltage < -vmax:
+            print(msg)
             voltage = -vmax
 
         if voltage >= 0:
@@ -128,7 +131,7 @@ class SISBias:
             self.ao_device.a_out(self.params['VCTRL_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
             self.ao_device.a_out(self.params['VCTRL_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
     
-    def sweep_control_voltage(self, vmin=-1.0, vmax=1.0, npts=1000, sweep_period=5.0, verbose=True):
+    def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, verbose=True):
         """Sweep control voltage (triangle wave).
 
         Uses two channels to create a differential output (to allow negative
@@ -168,40 +171,39 @@ class SISBias:
         # Start analog output scan
         self._sweep_control_voltage(vctrl_weave, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
 
-    # def pulse_control_voltage(self, vmin=0.0, vmax=1.0, period=0.1, sample_rate=10000):
-    #     """Pulse control voltage (square wave).
+    def pulse_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, verbose=True):
+        """Pulse control voltage (square wave).
 
-    #     Uses two channels to create a differential output (to allow negative
-    #     control voltages).
+        Uses two channels to create a differential output (to allow negative
+        control voltages).
 
-    #     Args:
-    #         vmin (float): minimum voltage
-    #         vmax (float): maximum voltage
-    #         period (float): period of sweep
-    #         sample_rate (int): sample rate
+        Args:
+            vmin (float): minimum voltage
+            vmax (float): maximum voltage
 
-    #     """
+        """
 
-    #     # Stop current scan
-    #     self.update_ao_scan_status()
-    #     if self._ao_scan_status == ScanStatus.RUNNING:
-    #         self.ao_device.scan_stop()
+        sample_period = sweep_period / npts
+        sample_frequency = 1 / sample_period
+        samples_per_period = int(2 * npts)
+        samples_per_channel = int(npts)
 
-    #     num_channels = 2
-    #     samples_per_period = int(sample_rate * period)
-    #     samples_per_channel = int(samples_per_period / num_channels)
+        # Stop current scan
+        self.update_ao_scan_status()
+        if self._ao_scan_status == ScanStatus.RUNNING:
+            self.ao_device.scan_stop()
 
-    #     # Build control voltage (square wave)
-    #     vctrl_p = vmax * np.r_[np.ones(samples_per_channel//2),
-    #                            np.zeros(samples_per_channel//2)]
-    #     vctrl_n = vmin * np.r_[np.zeros(samples_per_channel//2),
-    #                            np.ones(samples_per_channel//2)]
-    #     vctrl = np.empty(len(vctrl_n) + len(vctrl_p), dtype=float)
-    #     vctrl[::2] = vctrl_n
-    #     vctrl[1::2] = vctrl_p
+        # Build control voltage (square wave)
+        vctrl_p = vmax * np.r_[np.ones(samples_per_channel//2),
+                               np.zeros(samples_per_channel//2)]
+        vctrl_n = vmin * np.r_[np.zeros(samples_per_channel//2),
+                               np.ones(samples_per_channel//2)]
+        vctrl = np.empty(len(vctrl_n) + len(vctrl_p), dtype=float)
+        vctrl[::2] = vctrl_n
+        vctrl[1::2] = vctrl_p
 
-    #     # Start analog output scan
-    #     self._sweep_control_voltage(vctrl, period=period, sample_rate=sample_rate)
+        # Start analog output scan
+        self._sweep_control_voltage(vctrl, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
 
     def _sweep_control_voltage(self, voltage, sweep_period=5.0, sample_frequency=1000, verbose=True):
         """Sweep control voltage.

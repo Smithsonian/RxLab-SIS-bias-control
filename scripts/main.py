@@ -65,21 +65,21 @@ try:
             bias.start_iv_monitor_scan() #period=param['PERIOD']) #,
                                        # sample_rate=param['SAMPLE_RATE'])
 
-        # # PULSE: Pulse control voltage
-        # elif command[0] == "PULSE":
-        #     print("")
-        #     bias.pulse_control_voltage(vmin=param['VMIN'],
-        #                                vmax=param['VMAX'],
-        #                                sample_period=param['PERIOD'],
-        #                                sample_rate=param['SAMPLE_RATE'])
-        #     bias.start_iv_monitor_scan(period=param['PERIOD'],
-        #                                sample_rate=param['SAMPLE_RATE'])
+        # PULSE: Pulse control voltage
+        elif command[0] == "PULSE":
+            print("")
+            bias.pulse_control_voltage(vmin=param['VMIN'],
+                                       vmax=param['VMAX'],
+                                       sweep_period=param['PERIOD'])
+                                       # sample_rate=param['SAMPLE_RATE'])
+            bias.start_iv_monitor_scan() #period=param['PERIOD'],
+                                       #sample_rate=param['SAMPLE_RATE'])
 
         # VSET: Set constant control voltage
         elif command[0] == "VSET":
             vctrl = float(command[1])
             print("\n\tControl voltage: {:6.2f} V".format(vctrl))
-            bias.set_control_voltage(-vctrl)
+            bias.set_control_voltage(vctrl)
             time.sleep(0.1)
             vmon_mv = bias.read_voltage()
             print("\tVoltage monitor: {:6.2f} mV\n".format(vmon_mv))
@@ -99,15 +99,11 @@ try:
                 vbias2 = bias.read_voltage()
                 der = (vbias2 - vbias1) / 0.1
                 error = vbias1 - vbias_target
-                # if np.abs(error) < 0.02:
-                #     break
                 vctrl -= error / der 
                 bias.set_control_voltage(vctrl, vmax=2)
                 time.sleep(0.1)
             vbias = bias.read_voltage()
             print("\tBias voltage: {:.2f} mV\n".format(vbias))
-
-
 
         # VMON: Read voltage monitor
         elif command[0] == "VMON":
