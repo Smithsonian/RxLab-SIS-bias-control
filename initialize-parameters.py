@@ -13,7 +13,7 @@ params = dict(
         OFFSET = 0,
         ),
     IMON = dict(
-        GAIN = 1500, 
+        GAIN = -1500, 
         OFFSET = 0,
         ),
 )
