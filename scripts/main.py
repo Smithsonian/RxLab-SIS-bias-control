@@ -9,6 +9,14 @@ import sys
 sys.path.append("..")
 from sisbias import SISBias
 
+# Matplotlib formatting, optional
+try:
+    plt.style.use(["science", "sans", "no-latex"])
+except:
+    print("Matplotlib styles not found")
+    print("\ttry: pip install SciencePlots")
+
+# ----------------------------------------------------------------------------
 
 # Default parameters
 param = dict(
@@ -18,6 +26,7 @@ param = dict(
     SAMPLE_RATE = 1000.0,
 )
 
+# ----------------------------------------------------------------------------
 
 try:
     # Initialize bias control
