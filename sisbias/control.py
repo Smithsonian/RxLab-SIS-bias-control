@@ -3,6 +3,7 @@
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+import time
 
 import uldaq
 from uldaq import (get_daq_device_inventory, DaqDevice, InterfaceType, 
@@ -29,9 +30,11 @@ AI_SCAN_FLAG = AInScanFlag.DEFAULT
 class SISBias:
     """Class for SIS bias control."""
     
-    def __init__(self, param_file='params.json'):
+    def __init__(self, param_file=None):
         
         # Read parameters file
+        if param_file is None:
+            param_file = user_config_dir("rxlab-sis-bias")
         with open(param_file) as _fin:
             self.params = json.load(_fin)
 
@@ -125,12 +128,46 @@ class SISBias:
             voltage = -vmax
 
         if voltage >= 0:
-            self.ao_device.a_out(self.params['VCTRL_N_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
-            self.ao_device.a_out(self.params['VCTRL_P_CHANNEL'], AO_RANGE, AO_FLAG, voltage)
+            self.ao_device.a_out(self.params['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
+            self.ao_device.a_out(self.params['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, voltage)
         else:
-            self.ao_device.a_out(self.params['VCTRL_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
-            self.ao_device.a_out(self.params['VCTRL_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
+            self.ao_device.a_out(self.params['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
+            self.ao_device.a_out(self.params['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
     
+    def set_bias_voltage(self, vbias_target, dvctrl=0.1, vctrl_start=0, sleep_time=0.1, iterations=3, verbose=False):
+
+        # Starting value
+        vctrl = vctrl_start
+        self.set_control_voltage(vctrl, vmax=2)
+        time.sleep(sleep_time)
+
+        # Iterate to find control voltage
+        for _ in range(iterations):
+
+            # Read bias voltage
+            vbias1 = self.read_voltage()
+            if verbose:
+                print("\tBias voltage:  {:.2f} mV".format(vbias1))
+            
+            # Calculate derivative
+            self.set_control_voltage(vctrl + dvctrl, vmax=2)
+            time.sleep(sleep_time)
+            vbias2 = self.read_voltage()
+            der = (vbias2 - vbias1) / dvctrl
+
+            # Update control voltage
+            error = vbias1 - vbias_target
+            vctrl -= error / der 
+            self.set_control_voltage(vctrl, vmax=2)
+            time.sleep(sleep_time)
+
+        # Read final value
+        vbias = self.read_voltage()
+        if verbose:
+            print("\tBias voltage:  {:.2f} mV\n".format(vbias))
+
+        return vbias
+
     def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, verbose=True):
         """Sweep control voltage (triangle wave).
 
@@ -150,10 +187,10 @@ class SISBias:
         samples_per_period = int(2 * npts)
         samples_per_channel = int(npts)
 
-        # Stop current scan
-        self.update_ao_scan_status()
-        if self._ao_scan_status == ScanStatus.RUNNING:
-            self.ao_device.scan_stop()
+        # # Stop current scan
+        # self.update_ao_scan_status()
+        # if self._ao_scan_status == ScanStatus.RUNNING:
+        #     self.ao_device.scan_stop()
 
         # Build control voltage (triangle wave)
         vctrl_up = np.linspace(vmin, vmax, samples_per_channel // 2)
@@ -189,9 +226,9 @@ class SISBias:
         samples_per_channel = int(npts)
 
         # Stop current scan
-        self.update_ao_scan_status()
-        if self._ao_scan_status == ScanStatus.RUNNING:
-            self.ao_device.scan_stop()
+        # self.update_ao_scan_status()
+        # if self._ao_scan_status == ScanStatus.RUNNING:
+        #     self.ao_device.scan_stop()
 
         # Build control voltage (square wave)
         vctrl_p = vmax * np.r_[np.ones(samples_per_channel//2),
@@ -215,38 +252,46 @@ class SISBias:
 
         """
 
+        num_channels = 2
+        samples_per_period = int(sample_frequency * sweep_period)
+        samples_per_channel = int(samples_per_period)
+
         # Stop current scan
         self.update_ao_scan_status()
         if self._ao_scan_status == ScanStatus.RUNNING:
             self.ao_device.scan_stop()
 
-        num_channels = 2
-        samples_per_period = int(sample_frequency * sweep_period)
-        samples_per_channel = int(samples_per_period)
-
         # Create output buffer for control voltage
         output_buffer = create_float_buffer(2, samples_per_channel)
+
+        # Min/max value
+        control_signal = voltage[1::2] - voltage[::2]
+        vmin = control_signal.min()
+        vmax = control_signal.max()
+        npts = len(control_signal)
 
         # Fill buffer with data
         for i in range(len(voltage)):
             output_buffer[i] = voltage[i]
 
         # Start the output scan.
-        ao_chan_min = min(self.params['VCTRL_N_CHANNEL'], self.params['VCTRL_P_CHANNEL'])
-        ao_chan_max = max(self.params['VCTRL_N_CHANNEL'], self.params['VCTRL_P_CHANNEL'])
-        rate = self.ao_device.a_out_scan(ao_chan_min, ao_chan_max,
-                                         AO_RANGE, samples_per_channel, sample_frequency,
-                                         SCAN_OPTIONS, SCAN_FLAGS, output_buffer)
+        vctrl_n_chan = self.params['VCTRL']['AO_N_CHANNEL']
+        vctrl_p_chan = self.params['VCTRL']['AO_P_CHANNEL']
+        rate = self.ao_device.a_out_scan(vctrl_n_chan, vctrl_p_chan,
+                                         AO_RANGE, samples_per_channel, 
+                                         sample_frequency, SCAN_OPTIONS, 
+                                         SCAN_FLAGS, output_buffer)
 
         if verbose:
-            print("\n\tSweeping control voltage:")
+            print("\n\tSweep control voltage:")
             print(f'\t\t{self.daq_name}: ready')
-            print(f'\t\tRange: {AO_RANGE.name}')
-            print(f'\t\tSweep period: {sweep_period:.1f} s')
-            print(f'\t\tSweep frequency: {1 / sweep_period:.1f} Hz')
-            print(f'\t\tSamples per channel: {samples_per_channel:d}')
-            print(f'\t\tSample Rate: {sample_frequency:.1f} Hz')
-            print(f'\t\tActual sample rate: {rate:.1f} Hz\n')
+            print(f'\t\tDAC range:           {AO_RANGE.name}')
+            print(f'\t\tVoltage range:       {vmin:.1f} to {vmax:.1f} V')
+            print(f'\t\tVoltage points:      {npts}')
+            print(f'\t\tSweep frequency:     {1 / sweep_period:.1f} Hz')
+            print(f'\t\tSweep period:        {sweep_period:.1f} s')
+            print(f'\t\tSampling frequency:  {sample_frequency:.1f} Hz')
+            print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)\n')
 
     # Read voltage & current monitor ------------------------------------- ###
 
@@ -263,7 +308,7 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return (self._read_analog(self.params['VMON_AI_CHANNEL']) - self.params['VMON']['OFFSET']) / self.params['VMON']['GAIN'] * 1e3
+        return self._read_analog(self.params['VMON']['AI_CHANNEL']) / self.params['VMON']['GAIN'] * 1e3  - self.params['VMON']['OFFSET']
         
     def read_current(self):
         """Read current monitor.
@@ -278,7 +323,7 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return (self._read_analog(self.params['IMON_AI_CHANNEL']) - self.params['IMON']['OFFSET']) / self.params['IMON']['GAIN'] * 1e6
+        return self._read_analog(self.params['IMON']['AI_CHANNEL']) / self.params['IMON']['GAIN'] * 1e6 - self.params['IMON']['OFFSET']
     
     def read_ifpower(self):
         """Read IF power from power meter/detector.
@@ -293,13 +338,13 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return self._read_analog(self.params['PIF_AI_CHANNEL'])
+        return self._read_analog(self.params['PIF']['AI_CHANNEL']) - self.params['PIF']['OFFSET']
 
     def read_iv_curve(self, debug=False):
         """Read I-V curve.
 
         Returns:
-            voltage in V and current in A
+            voltage in V, current in A, IF power in A.U.
 
         """
 
@@ -311,9 +356,10 @@ class SISBias:
             print("Raw voltage range: {:.2f} to {:.2f} V".format(voltage.min(), voltage.max()))
             print("Raw current range: {:.2f} to {:.2f} V".format(current.min(), current.max()))
 
-        # Calibrate to V / A
-        voltage = (voltage - self.params['VMON']['OFFSET']) / self.params['VMON']['GAIN']
-        current = (current - self.params['IMON']['OFFSET']) / self.params['IMON']['GAIN']
+        # Calibrate and correct offset
+        voltage = voltage / self.params['VMON']['GAIN'] - self.params['VMON']['OFFSET']
+        current = current / self.params['IMON']['GAIN'] - self.params['IMON']['OFFSET']
+        ifpower = ifpower - self.params['PIF']['OFFSET']
 
         return voltage, current, ifpower
 
@@ -330,7 +376,7 @@ class SISBias:
 
         return self.ai_device.a_in(channel, AI_MODE, AI_RANGE, AI_FLAG)
 
-    def start_iv_monitor_scan(self, npts=1001, sweep_period=5.0, verbose=True):
+    def start_iv_monitor_scan(self, npts=1000, sweep_period=5.0, verbose=True):
         """Scan voltage & current monitors.
 
         Args:
@@ -351,8 +397,8 @@ class SISBias:
         self.analog_input = create_float_buffer(3, samples_per_channel)
 
         # Start the acquisition.
-        rate = self.ai_device.a_in_scan(self.params['VMON_AI_CHANNEL'], 
-                                        self.params['PIF_AI_CHANNEL'],
+        rate = self.ai_device.a_in_scan(self.params['VMON']['AI_CHANNEL'], 
+                                        self.params['PIF']['AI_CHANNEL'],
                                         AI_MODE, AI_RANGE, samples_per_channel,
                                         sample_frequency, SCAN_OPTIONS,
                                         AI_SCAN_FLAG, self.analog_input)
@@ -360,48 +406,25 @@ class SISBias:
         if verbose:
             print("\n\tReading voltage & current monitors:")
             print(f'\t\t{self.daq_name}: ready')
-            print(f'\t\tRange: {AI_RANGE.name}')
-            print(f'\t\tSweep period: {sweep_period:.1f} s')
-            print(f'\t\tSweep frequency: {sample_frequency:.1f} Hz')
-            print(f'\t\tSamples per channel: {samples_per_channel:d}')
-            print(f'\t\tSample Rate: {sample_frequency:.1f} Hz')
-            print(f'\t\tActual sample rate: {rate:.1f} Hz\n')
+            print(f'\t\tADC range:           {AI_RANGE.name}')
+            print(f'\t\tNumber of samples:   {samples_per_channel:d}')
+            print(f'\t\tSweep frequency:     {1/sweep_period:.1f} Hz')
+            print(f'\t\tSweep period:        {sweep_period:.1f} s')
+            print(f'\t\tSampling frequency:  {sample_frequency:.1f} Hz')
+            print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)\n')
 
     # Plot --------------------------------------------------------------- ###
 
-    def plot(self, mode="once"):
+    def plot(self):
         """Plot I-V curve."""
 
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(8,8))
+        voltage, current, _ = self.read_iv_curve()
+        ax.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
         ax.set_xlabel("Voltage (mV)")
         ax.set_ylabel("Current (uA)")
         ax.set_title("SIS bias control")
-
-        # Once
-        if mode == "once":
-            voltage, current, _ = self.read_iv_curve()
-            ax.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
-            plt.show()
-            return
-
-        # TODO: allow to run continuously
-
-        # # plt.show(False)
-        # plt.draw()
-
-        # points = ax.plot([0], [0], 'ko', alpha=0.2, ms=1)[0]
-
-        # for _ in range(10):
-        #     npts = 500
-        #     voltage, current = np.empty(npts), np.empty(npts)
-        #     for i in range(npts):
-        #         voltage[i] = bias.read_voltage()
-        #         current[i] = bias.read_current()
-        #         time.sleep(0.001)
-        #     # plt.plot(voltage, current, 'ko', alpha=0.2, ms=1)
-        #     points.set_data(voltage, current)
-        #     fig.canvas.draw()
-        #     plt.pause(0.1)    
+        plt.show()
 
     # Scan status -------------------------------------------------------- ###
     
@@ -428,11 +451,6 @@ class SISBias:
         self._ai_scan_status, self._ai_transfer_status = self.ai_device.get_scan_status()
 
     # Stop --------------------------------------------------------------- ###
-
-    def stop(self):
-        """Stop DAQ device and close all connections."""
-        
-        self.close()
     
     def close(self):
         """Stop DAQ device and close all connections."""
@@ -453,3 +471,8 @@ class SISBias:
             print("done\n")
         except uldaq.ul_exception.ULException:
             print("\nDevice already disconnected\n")
+
+    def stop(self):
+        """Stop DAQ device and close all connections."""
+        
+        self.close()
