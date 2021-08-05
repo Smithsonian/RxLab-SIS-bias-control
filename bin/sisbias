@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Main script for controlling the SIS bias via the MCC DAQ device."""
+
+import argparse
+import time
+import numpy as np 
+import matplotlib
+import matplotlib.pyplot as plt 
+
+from appdirs import user_config_dir
+
+from sisbias import SISBias
+
+# Matplotlib formatting, optional
+try:
+    plt.style.use(["science", "sans", "no-latex"])
+except:
+    print("Matplotlib styles not found")
+    print("\ttry: pip install SciencePlots")
+
+# ----------------------------------------------------------------------------
+
+# Grab arguments
+parser = argparse.ArgumentParser(description="Plot I-V curve and IF power in realtime.")
+parser.add_argument("-c", "--configfile", type=str, help="Config file", default=None)
+parser.add_argument("-f", "--fsample", type=int, help="Sampling frequency, default is 10000 Hz", default=10_000)
+parser.add_argument("-p", "--period", type=float, help="Sweep period, default is 0.2 s", default=0.2)
+parser.add_argument("--vmax", type=float, help="Maximum control voltage, default is 1 V", default=1)
+parser.add_argument("--vmin", type=float, help="Minimum control voltage, default is -1 V", default=None)
+args = parser.parse_args()
+
+# Location of config file
+if args.configfile is None:
+    filename = user_config_dir("rxlab-sis-bias")
+else:
+    filename = args.configfile
+    
+# Sweep parameters
+period = args.period
+npts = args.fsample * period
+if args.vmax is None:
+    vmax = 1
+else:
+    vmax = args.vmax
+if args.vmin is None:
+    vmin = -vmax
+else:
+    vmin = args.vmin
+
+param = dict(
+    VMIN=vmin,
+    VMAX=vmax,
+    PERIOD=period,
+    NPTS=npts,
+    )
+
+# ----------------------------------------------------------------------------
+
+try:
+    # Initialize bias control
+    bias = SISBias(param_file=filename)
+
+    # Interactive plots
+    plt.ion()
+
+    while True:
+
+        # Get command
+        command = input(">> ")
+        command = command.split()
+        if len(command) == 0:
+            continue
+        if not isinstance(command, list):
+            command = [command,]
+        command[0] = command[0].upper()
+
+        # If parameter, set parameter
+        if command[0] in param.keys():
+            try:
+                param[command[0]] = float(command[1])
+            except IndexError:
+                print("Error: parameter not set")
+                continue
+
+        # VSET: Set constant control voltage
+        elif command[0] == "VSET":
+            vctrl = float(command[1])
+            print("\n\tControl voltage: {:6.2f} V".format(vctrl))
+            bias.set_control_voltage(vctrl)
+            time.sleep(0.1)
+            vmon_mv = bias.read_voltage()
+            print("\tVoltage monitor: {:6.2f} mV\n".format(vmon_mv))
+
+        # VBIAS: Set constant bias voltage
+        elif command[0] == "VBIAS":
+            vbias = float(command[1])
+            print("\n\tBias target: {:6.2f} V".format(vbias))
+            bias.set_bias_voltage(vbias, verbose=True)
+
+        # VMON: Read voltage monitor
+        elif command[0] == "VMON":
+            vmon_mv = bias.read_voltage()
+            print("\n\tVoltage monitor: {:.2f} mV\n".format(vmon_mv))
+
+        # IMON: Read current monitor
+        elif command[0] == "IMON":
+            imon_ua = bias.read_current()
+            print("\n\tCurrent monitor: {:.1f} mA\n".format(imon_ua))
+
+        # PIF: Read IF power
+        elif command[0] == "PIF":
+            ifpower_uw = bias.read_ifpower()
+            print("\n\tIF power: {:.4f} uW\n".format(ifpower_uw))
+
+        # # Y-factor
+        # elif command[0] == "YFAC" or "Y":
+        #     yfactor = float(command[1]) / float(command[2])
+        #     th = 294
+        #     tc = 78
+        #     tn = (th - yfactor * tc) / (yfactor - 1)
+        #     print("\n\tY-factor:          {:5.2f}".format(yfactor))
+        #     print("\n\tNoise temperature: {:5.1f} K\n".format(tn))
+
+        # SWEEP / START: Sweep control voltage
+        elif command[0] == "SWEEP" or command[0] == "START" or command[0] == "S":
+            bias.sweep_control_voltage(vmin=param['VMIN'],
+                                       vmax=param['VMAX'],
+                                       sweep_period=param['PERIOD'],
+                                       npts=param['NPTS'])
+            bias.start_iv_monitor_scan(sweep_period=param['PERIOD'],
+                                       npts=param['NPTS'])
+
+        # PULSE: Pulse control voltage
+        elif command[0] == "PULSE":
+            bias.pulse_control_voltage(vmin=param['VMIN'],
+                                       vmax=param['VMAX'],
+                                       sweep_period=param['PERIOD'],
+                                       npts=param['NPTS'])
+            bias.start_iv_monitor_scan(sweep_period=param['PERIOD'],
+                                       npts=param['NPTS'])
+
+        # PLOT: Plot I-V curve
+        elif command[0] == "PLOT" or command[0] == "P":
+            if not bias.ao_scan_status():
+                print("You haven't started scanning yet...")
+            bias.plot()
+
+        # INFO: Print info
+        elif command[0] == "INFO" or command[0] == "I":
+            print("")
+            for key, value in param.items():
+                sep = "\t" if len(key) > 8 else "\t\t"
+                print(f"\t{key}{sep}{value:10.1f}")
+            print("")
+
+        # STATUS: Print scan status
+        elif command[0] == "STATUS":
+            if bias.ao_scan_status():
+                print("\n\tScanning\n")
+            else:
+                print("\n\tNot scanning\n")
+
+        # RESISTANCE or R: Get resistance of I-V curve
+        elif command[0] == "RESISTANCE" or command[0] == "R":
+            voltage, current, _ = bias.read_iv_curve()
+            p = np.polyfit(voltage, current, 1)
+            print(f"\n\tResistance: {1/p[0]:.2f} ohms")
+            current_std = np.std(current - np.polyval(p, voltage))
+            print(f"\tCurrent std. dev.: {current_std:.1e} A\n")
+
+        # CLEAR: Clear all plots
+        elif command[0] == "CLEAR" or command[0] == "C":
+            plt.close("all")
+
+        # HELP: Print help
+        elif command[0] == "HELP" or command[0] == "H":
+
+            # Commands
+            print("\n\tAvailable commands:")
+            print("\t\tHELP or H: Print help")
+            print("\t\tVSET: Set constant control voltage")
+            print("\t\tVBIAS: Set constant bias voltage")
+            print("\t\tVMON: Read voltage monitor")
+            print("\t\tIMON: Read current monitor")
+            print("\t\tPIF: Read IF power from power meter")
+            print("\t\tSWEEP or START or S: Sweep control voltage (triangle wave)")
+            print("\t\tPULSE: Pulse control voltage (square wave)")
+            print("\t\tPLOT or P: Plot I-V curve")
+            print("\t\tINFO: Print all parameters")
+            print("\t\tSTATUS: Print scan status")
+            print("\t\tRESISTANCE or R: Calculate resistance")
+            print("\t\tCLEAR or C: Clear all plots")
+            print("\t\tSTOP or EXIT or Q: Close connection")
+
+            # Parameters
+            print("\n\tAvailable parameters:")
+            print("\t\tVMIN <value>: Minimum control voltage for sweep or pulse, in [V]")
+            print("\t\tVMAX <value>: Maximum control voltage for sweep or pulse, in [V]")
+            print("\t\tPERIOD <value>: Period of sweep or pulse, in [s]")
+            print("\t\tNPTS <value>: Number of points in voltage sweep")
+            print("")
+
+        # STOP: Stop bias and shutdown
+        elif command[0] == "STOP" or command[0] == "EXIT" or command[0] == "Q":
+            break
+
+        # Command not recognized
+        else:
+            print("\n\tCommand not recognized.\n")
+
+except KeyboardInterrupt:
+    print("\nClosing program.")
+
+except EOFError:
+    print("\nClosing program.")
+
+finally:
+    bias.close()
