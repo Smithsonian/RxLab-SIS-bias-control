@@ -15,8 +15,6 @@ import matplotlib.pyplot as plt
 from appdirs import user_config_dir
 from qmix.mathfn.filters import gauss_conv
 
-import sys
-sys.path.append("..")
 from sisbias import SISBias
 
 # Matplotlib formatting, optional
