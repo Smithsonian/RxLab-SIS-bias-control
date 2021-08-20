@@ -74,7 +74,7 @@ if args.plot_if:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
     ax2.set_xlim([voltage.min() * 1e3, voltage.max() * 1e3])
     ax2.set_xlabel("Voltage (mV)")
-    ax2.set_ylim([0, 5])
+    ax2.set_ylim([0, 1])
     ax2.set_ylabel("IF power (uW)")
 else:
     fig, ax1 = plt.subplots(figsize=(10,8))
