@@ -1,15 +1,15 @@
 """Control SIS bias via MCC DAQ device."""
 
 import json
-import numpy as np
-import matplotlib.pyplot as plt
 import time
 
+import matplotlib.pyplot as plt
+import numpy as np
 import uldaq
-from uldaq import (get_daq_device_inventory, DaqDevice, InterfaceType, 
-                   AOutFlag, AiInputMode, AInFlag, Range, ScanStatus,
-                   create_float_buffer, AOutScanFlag, ScanOption, AInScanFlag)
-
+from appdirs import user_config_dir
+from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag,
+                   DaqDevice, InterfaceType, Range, ScanOption, ScanStatus,
+                   create_float_buffer, get_daq_device_inventory)
 
 # DAQ
 INTERFACE_TYPE = InterfaceType.USB
@@ -30,12 +30,12 @@ AI_SCAN_FLAG = AInScanFlag.DEFAULT
 class SISBias:
     """Class for SIS bias control."""
     
-    def __init__(self, param_file=None):
+    def __init__(self, config_file=None):
         
         # Read parameters file
-        if param_file is None:
-            param_file = user_config_dir("rxlab-sis-bias")
-        with open(param_file) as _fin:
+        if config_file is None:
+            config_file = user_config_dir("rxlab-sis-bias")
+        with open(config_file) as _fin:
             self.params = json.load(_fin)
 
         # Get all available DAQ devices

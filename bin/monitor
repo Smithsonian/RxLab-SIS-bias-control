@@ -58,7 +58,7 @@ else:
 # ----------------------------------------------------------------------------
 
 # Start I-V bias sweeps
-bias = SISBias(param_file=filename)
+bias = SISBias(config_file=filename)
 print("\tPress control-C to exit")
 if not args.vctrl_off:
     bias.sweep_control_voltage(vmin, vmax, npts=npts, sweep_period=period)

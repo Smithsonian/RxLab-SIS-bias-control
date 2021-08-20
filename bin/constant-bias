@@ -41,7 +41,7 @@ else:
 # ----------------------------------------------------------------------------
 
 # Initialize DAQ device
-bias = SISBias(param_file=filename)
+bias = SISBias(config_file=filename)
 
 # Set constant bias voltage
 bias.set_control_voltage(args.vctrl)

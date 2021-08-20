@@ -92,7 +92,7 @@ vmax_slope = 7.5 * args.njunc  # mV
 # Sweep bias voltage ---------------------------------------------------------
 
 # Initialize SIS bias control
-bias = SISBias(param_file=filename)
+bias = SISBias(config_file=filename)
 
 # Sweep bias voltage and measure voltage/current/IF power
 voltage = np.empty_like(control_voltage)
