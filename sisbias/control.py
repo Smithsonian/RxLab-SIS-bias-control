@@ -147,7 +147,7 @@ class SISBias:
             # Read bias voltage
             vbias1 = self.read_voltage()
             if verbose:
-                print("\tBias voltage:  {:.2f} mV".format(vbias1))
+                print("\tBias voltage:  {:6.2f} mV".format(vbias1))
             
             # Calculate derivative
             self.set_control_voltage(vctrl + dvctrl, vmax=2)
@@ -164,9 +164,9 @@ class SISBias:
         # Read final value
         vbias = self.read_voltage()
         if verbose:
-            print("\tBias voltage:  {:.2f} mV\n".format(vbias))
+            print("\tBias voltage:  {:6.2f} mV\n".format(vbias))
 
-        return vbias
+        return vbias, vctrl
 
     def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, verbose=True):
         """Sweep control voltage (triangle wave).
@@ -291,7 +291,7 @@ class SISBias:
             print(f'\t\tSweep frequency:     {1 / sweep_period:.1f} Hz')
             print(f'\t\tSweep period:        {sweep_period:.1f} s')
             print(f'\t\tSampling frequency:  {sample_frequency:.1f} Hz')
-            print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)\n')
+            print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)')
 
     # Read voltage & current monitor ------------------------------------- ###
 
@@ -411,19 +411,24 @@ class SISBias:
             print(f'\t\tSweep frequency:     {1/sweep_period:.1f} Hz')
             print(f'\t\tSweep period:        {sweep_period:.1f} s')
             print(f'\t\tSampling frequency:  {sample_frequency:.1f} Hz')
-            print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)\n')
+            print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)')
 
     # Plot --------------------------------------------------------------- ###
 
     def plot(self):
         """Plot I-V curve."""
 
-        fig, ax = plt.subplots(figsize=(8,8))
-        voltage, current, _ = self.read_iv_curve()
-        ax.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
-        ax.set_xlabel("Voltage (mV)")
-        ax.set_ylabel("Current (uA)")
-        ax.set_title("SIS bias control")
+        voltage, current, power = self.read_iv_curve()
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,6))
+        ax1.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
+        ax1.set_xlabel("Voltage (mV)")
+        ax1.set_ylabel("Current (uA)")
+
+        ax2.plot(voltage*1e3, power, 'ko', alpha=0.2, ms=1)
+        ax2.set_xlabel("Voltage (mV)")
+        ax2.set_ylabel("Power (au)")
+
         plt.show()
 
     # Scan status -------------------------------------------------------- ###
