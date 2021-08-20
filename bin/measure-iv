@@ -40,6 +40,7 @@ parser.add_argument("--no-shot", dest="shot", action="store_false", help="Don't 
 parser.set_defaults(shot=True)
 parser.add_argument("--vmax", type=float, help="Maximum control voltage", default=None)
 parser.add_argument("--vmin", type=float, help="Minimum control voltage", default=None)
+parser.add_argument("--if-correction", dest="if_correction", type=float, help="IF correction, power to K", default=None)
 parser.add_argument("--current-offset", dest="i_offset", type=float, help="Current offset in uA", default=None)
 parser.add_argument("--if-offset", dest="if_offset", type=float, help="IF power offset offset in uW", default=0)
 parser.add_argument("--resistor", action="store_true", help="Measure simple resistance", default=False)
@@ -140,10 +141,15 @@ elif not args.pump:
 # Calibrate IF power
 print("\nMean IF power: {:.4f} uW".format(np.mean(ifpower)))
 ifpower -= args.if_offset  # offset
-if args.shot and not args.pump:
+if args.if_correction is not None:
+    ifpower_k = ifpower * args.if_correction
+    print("\nIF power, uW -> K: {:.4e}".format(args.if_correction))
+elif args.shot and not args.pump:
     mask = (vmin_slope <= voltage) & (voltage <= vmax_slope)
     pshot = np.polyfit(voltage[mask], ifpower[mask], 1)
-    ifpower_k = ifpower / pshot[0] * 5.8 / args.njunc  # TODO: check
+    uw_to_k = 5.8 / pshot[0] / args.njunc  # TODO: check
+    ifpower_k = ifpower * uw_to_k
+    print("\nIF power, uW -> K: {:.4e}".format(uw_to_k))
 
 # Calculate IF noise
 if args.shot and not args.pump:
@@ -175,7 +181,7 @@ ax1.legend(loc=2, frameon=True)
 
 # Plot IF power
 ax2.axvline(0, c='k', lw=0.5)
-if args.shot and not args.pump:
+if args.if_correction is not None or (args.shot and not args.pump):
     ax2.plot(voltage, ifpower_k, 'k-', label='IF power')
     # if vmin == -vmax:
     #     ax2.plot(-voltage, ifpower_k, 'k-', alpha=0.5)
@@ -195,3 +201,15 @@ ax2.set_ylim(ymin=0)
 ax2.legend(loc=4, frameon=True)
 
 plt.show()
+
+filename = input("Filename for data: ")
+if filename == "":
+    print("Not saving data.")
+else:
+    if args.if_correction is not None or (args.shot and not args.pump):
+        header = "# Voltage (mV), Current (uA), IF power (K)"
+        np.savetxt(filename, np.vstack((voltage, current, ifpower_k)).T, header=header)
+    else:
+        header = "# Voltage (mV), Current (uA), IF power (au)"
+        np.savetxt(filename, np.vstack((voltage, current, ifpower)).T, header=header)
+print("")
