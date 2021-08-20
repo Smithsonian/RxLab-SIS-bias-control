@@ -33,7 +33,7 @@ setup(
     url="https://github.com/Smithsonian/RxLab-SIS-bias/",
     packages=find_packages(),
     install_requires=[
-        'appdirs',
+        'appdirs', 'numpy', 'matplotlib'
     ],
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
