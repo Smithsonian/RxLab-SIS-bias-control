@@ -1,4 +1,4 @@
-"""Initialize parameters file for SIS bias control."""
+"""Initialize configuration file for SIS bias control."""
 
 import json
 
@@ -11,8 +11,8 @@ parser.add_argument("-c", "--configfile", type=str, help="Config file", default=
 args = parser.parse_args()
 
 
-# Default parameters
-params = dict(
+# Default config
+config = dict(
     # Control voltage
     VCTRL = dict(
         AO_N_CHANNEL = 0,
@@ -40,12 +40,12 @@ params = dict(
 
 # Location of config file
 if args.configfile is None:
-    filename = user_config_dir("rxlab-sis-bias")
+    filename = user_config_dir("rxlab-sis-bias.config")
 else:
     filename = args.configfile
 
 # Save config file
 with open(filename, 'w') as fout:
-    json.dump(params, fout, indent=4)
+    json.dump(config, fout, indent=4)
 
 print(f"Configuration file saved to: {filename}")
