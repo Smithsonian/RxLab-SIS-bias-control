@@ -4,6 +4,7 @@
 """Interactive script for controlling the SIS bias box."""
 
 import argparse
+import json
 import time
 import numpy as np
 import matplotlib.pyplot as plt 
@@ -52,37 +53,23 @@ def ask_filename(msg="\tFile name: "):
 
 # Grab arguments
 parser = argparse.ArgumentParser(description="Plot I-V curve and IF power in realtime.")
-parser.add_argument("-c", "--configfile", type=str, help="Config file", default=None)
-parser.add_argument("-f", "--fsample", type=int, help="Sampling frequency, default is 10000 Hz", default=10_000)
-parser.add_argument("-p", "--period", type=float, help="Sweep period, default is 0.2 s", default=0.2)
-parser.add_argument("--vmax", type=float, help="Maximum control voltage, default is 2 V", default=2)
-parser.add_argument("--vmin", type=float, help="Minimum control voltage, default is -2 V", default=-2)
+parser.add_argument("-c", "--configfile", type=str, help="Configuration file", default=None)
+parser.add_argument("-p", "--paramfile", type=str, help="Parameter file", default=None)
 args = parser.parse_args()
 
 # Location of config file
 if args.configfile is None:
-    config_filename = user_config_dir("rxlab-sis-bias")
+    config_filename = user_config_dir("rxlab-sis-bias.config")
 else:
     config_filename = args.configfile
-    
-# Sweep parameters
-period = args.period
-npts = int(args.fsample * period)
-vmax = args.vmax
-vmin = args.vmin
 
-param = dict(
-    VMIN=vmin,
-    VMAX=vmax,
-    PERIOD=period,
-    NPTS=npts,
-    FREQ=0,
-    NJUNC=3,
-    IOFFSET=0,
-    IFOFFSET=0,
-    LNA='on',
-    IFCORR=1,
-    )
+# Location of param file
+if args.paramfile is None:
+    param_filename = user_config_dir("rxlab-sis-bias.param")
+else:
+    param_filename = args.paramfile
+with open(param_filename) as _fin:
+    param = json.load(_fin)
 
 
 # ----------------------------------------------------------------------------
@@ -147,7 +134,7 @@ try:
                 time.sleep(0.1)
                 vmon_mv = bias.read_voltage()
                 print("\tVoltage monitor: {:6.2f} mV\n".format(vmon_mv))
-                imon_ua = bias.read_current()
+                imon_ua = bias.read_current() - param['IOFFSET']
                 print("\tCurrent monitor: {:6.2f} uA\n".format(imon_ua))
 
         # VBIAS: Set constant bias voltage
@@ -166,7 +153,7 @@ try:
         # IMON: Read current monitor
         elif command[0] == "IMON":
 
-            imon_ua = bias.read_current()
+            imon_ua = bias.read_current() - param['IOFFSET']
             print("\n\tCurrent monitor: {:.1f} mA\n".format(imon_ua))
 
         # PIF: Read IF power
@@ -221,6 +208,8 @@ try:
             print("")
 
             voltage, current, ifpower = bias.read_iv_curve()
+            current -= param['IOFFSET'] * 1e-6
+            ifpower -= param['IFOFFSET']
 
             # Initialize figure
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
@@ -256,6 +245,9 @@ try:
                         i_results[i] = np.mean(i_tmp)
                         p_results[i] = np.mean(p_tmp)
 
+                    i_results -= param['IOFFSET']
+                    p_results -= param['IFOFFSET']
+
                     line1.set_data(v_results, i_results)
                     line2.set_data(v_results, p_results)
                     fig.canvas.draw()
@@ -290,6 +282,8 @@ try:
 
             # Read I-V curve
             voltage, current, ifpower = bias.read_iv_curve()
+            current -= param['IOFFSET'] * 1e-6
+            ifpower -= param['IFOFFSET']
 
             # Create figure
             plt.ion()
@@ -318,7 +312,9 @@ try:
 
                     # Read I-V curve
                     voltage, current, ifpower = bias.read_iv_curve()
-                    
+                    current -= param['IOFFSET'] * 1e-6
+                    ifpower -= param['IFOFFSET']
+
                     # Draw I-V curve
                     line1.set_data(voltage * 1e3, current * 1e6)
                     line2.set_data(voltage * 1e3, ifpower)
@@ -363,21 +359,26 @@ try:
             vctrl_sweep = np.linspace(vmin, vmax, npts)
 
             # Sweep bias voltage and measure voltage / current / IF power
-            voltage = np.empty_like(vctrl_sweep)
-            current = np.empty_like(vctrl_sweep)
-            ifpower = np.empty_like(vctrl_sweep)
-            for i, _vctrl in np.ndenumerate(vctrl_sweep):
-                bias.set_control_voltage(_vctrl)
-                time.sleep(sleep_time)
-                vtmp, itmp, ptmp = np.empty(average), np.empty(average), np.empty(average)
-                for j in range(average):
-                    vtmp[j] = bias.read_voltage()  # mV
-                    itmp[j] = bias.read_current()  # uA
-                    ptmp[j] = bias.read_ifpower()  # A.U.
-                voltage[i] = np.mean(vtmp)
-                current[i] = np.mean(itmp)
-                ifpower[i] = np.mean(ptmp)
-                progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
+            try:
+                voltage = np.empty_like(vctrl_sweep)
+                current = np.empty_like(vctrl_sweep)
+                ifpower = np.empty_like(vctrl_sweep)
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias.set_control_voltage(_vctrl)
+                    time.sleep(sleep_time)
+                    vtmp, itmp, ptmp = np.empty(average), np.empty(average), np.empty(average)
+                    for j in range(average):
+                        vtmp[j] = bias.read_voltage()  # mV
+                        itmp[j] = bias.read_current()  # uA
+                        ptmp[j] = bias.read_ifpower()  # A.U.
+                    voltage[i] = np.mean(vtmp)
+                    current[i] = np.mean(itmp)
+                    ifpower[i] = np.mean(ptmp)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue  # TODO
 
             # Sort by voltage
             idx = voltage.argsort()
@@ -528,6 +529,8 @@ try:
                 ifpower[i] = bias.read_ifpower()
                 if i % 1000 == 0 or i + 1 == npts:
                     progress_bar(i + 1, npts, prefix="\tProgress: ")
+            current -= param['IOFFSET']
+            ifpower -= param['IFOFFSET']
             total_time = time.time() - start
             t = np.linspace(0, total_time, npts)
             ifpower *= 10
@@ -760,10 +763,10 @@ try:
         # STOP: Stop bias and shutdown
         elif command[0] == "STOP" or command[0] == "EXIT" or command[0] == "Q":
 
-            answer = input("\nQuit? [y/n] : ")
-            if answer.lower() == "y":
-                break
-            print("")
+            # answer = input("\nQuit? [y/n] : ")
+            # if answer.lower() == "y":
+            #     break
+            # print("")
 
             break
 
@@ -778,4 +781,10 @@ except EOFError:
     print("\nClosing program.")
 
 finally:
+
+    # Save parameters
+    with open(param_filename, 'w') as fout:
+        json.dump(param, fout, indent=4)
+    print(f"Parameters saved to: {param_filename}")
+
     bias.close()
