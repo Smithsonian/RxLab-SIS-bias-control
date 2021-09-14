@@ -102,7 +102,7 @@ class SISBias:
 
     # Set control voltage ------------------------------------------------ ###
 
-    def set_control_voltage(self, voltage, vmax=3):
+    def set_control_voltage(self, voltage, vmax=3, verbose=False):
         """Set control voltage to a constant value (no sweep).
 
         Uses two channels to create a differential output (to allow negative
@@ -133,6 +133,9 @@ class SISBias:
         else:
             self.ao_device.a_out(self.params['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
             self.ao_device.a_out(self.params['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
+
+        if verbose:
+            print(f"Control voltage set to {voltage:.1f} V")
     
     def set_bias_voltage(self, vbias_target, dvctrl=0.1, vctrl_start=0, sleep_time=0.1, iterations=3, verbose=False):
 
