@@ -159,8 +159,13 @@ try:
         # PIF: Read IF power
         elif command[0] == "PIF":
 
-            ifpower_uw = bias.read_ifpower()
-            print("\n\tIF power: {:.4f} uW\n".format(ifpower_uw))
+            ifpower_uw = np.zeros(1000)
+            for i in range(1000):
+                ifpower_uw[i] = bias.read_ifpower()
+            mean_ifpower_uw = np.mean(ifpower_uw) - param["IFOFFSET"]
+            print("\n\tIF power: {:.4f} uW".format(mean_ifpower_uw))
+            print("\n\t          {:.4f} K\n".format(mean_ifpower_uw * param['IFCORR']))
+
 
         # Control bias voltage --------------------------------------------- #
 
@@ -176,6 +181,7 @@ try:
 
             bias.start_iv_monitor_scan(sweep_period=param['PERIOD'],
                                        npts=param['NPTS'])
+            print("")
 
         # PULSE: Pulse control voltage
         elif command[0] == "PULSE":
@@ -306,7 +312,7 @@ try:
                 try:
 
                     # Restart scans
-                    bias.sweep_control_voltage(vmin, vmax, npts=npts, sweep_period=period, verbose=False)
+                    bias.sweep_control_voltage(param['VMIN'], param['VMAX'], npts=npts, sweep_period=period, verbose=False)
                     bias.start_iv_monitor_scan(npts=npts, sweep_period=period, verbose=False)
                     time.sleep(period)
 
@@ -351,8 +357,8 @@ try:
                 sleep_time = 0.05
 
             # Voltage range for linear fit (shot noise and normal resistance)
-            vmin_slope = 3.5 * param['NJUNC']  # mV
-            vmax_slope = 7.5 * param['NJUNC']  # mV
+            vmin_slope = 4  * param['NJUNC']  # mV
+            vmax_slope = 10 * param['NJUNC']  # mV
 
             # Parameters
             vmin, vmax = param["VMIN"], param["VMAX"]
@@ -414,6 +420,7 @@ try:
                     rnormal = 1000 / pnormal[0]
                     print("\n\tNormal resistance:\t{:.1f} ohms".format(rnormal))
                 except:
+                    pnormal = None
                     pass
 
             # Calibrate IF power
@@ -455,7 +462,8 @@ try:
                 ax1.plot(voltage, current, 'k-', label='I-V curve')
             else:
                 ax1.plot(voltage, current, 'k-', label='DC I-V curve')
-                ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$".format(rnormal))
+                if pnormal is not None:
+                    ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$".format(rnormal))
                 if param['LNA'] == 'on':
                     try:
                         ax1.plot(v_intercept, 0, 'r*', ms=10, label="$x$-intercept")
@@ -652,7 +660,7 @@ try:
         # RESISTANCE or R: Get resistance of I-V curve
         elif command[0] == "RESISTANCE" or command[0] == "R":
 
-            print("\n\tMEASURE RESISTANCE OF IV CURVE:")
+            print("\n\tMEASURE RESISTANCE OF I-V CURVE:")
 
             voltage, current, _ = bias.read_iv_curve()
             p = np.polyfit(voltage, current, 1)
@@ -663,7 +671,7 @@ try:
         # PLOT: Plot I-V curve
         elif command[0] == "PLOT" or command[0] == "P":
 
-            print("\n\tMEASURE IV CURVE:")
+            print("\n\tPLOT I-V CURVE\n")
 
             if not bias.ao_scan_status():
                 print("You haven't started scanning yet...")
@@ -785,6 +793,10 @@ finally:
     # Save parameters
     with open(param_filename, 'w') as fout:
         json.dump(param, fout, indent=4)
-    print(f"Parameters saved to: {param_filename}")
+    print(f"\nParameters saved to: {param_filename}")
 
-    bias.close()
+    try:
+        bias.set_control_voltage(0, verbose=True)
+        bias.close()
+    except NameError:
+        pass
