@@ -148,14 +148,20 @@ class SISBias:
         for _ in range(iterations):
 
             # Read bias voltage
-            vbias1 = self.read_voltage()
+            _vbias1 = np.zeros(100)
+            for i in range(100):
+                _vbias1[i] = self.read_voltage()
+            vbias1 = np.mean(_vbias1)
             if verbose:
                 print("\tBias voltage:  {:6.2f} mV".format(vbias1))
             
             # Calculate derivative
             self.set_control_voltage(vctrl + dvctrl, vmax=2)
             time.sleep(sleep_time)
-            vbias2 = self.read_voltage()
+            _vbias2 = np.zeros(100)
+            for i in range(100):
+                _vbias2[i] = self.read_voltage()
+            vbias2 = np.mean(_vbias2)
             der = (vbias2 - vbias1) / dvctrl
 
             # Update control voltage
