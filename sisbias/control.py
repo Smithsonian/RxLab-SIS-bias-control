@@ -9,7 +9,8 @@ import uldaq
 from appdirs import user_config_dir
 from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag,
                    DaqDevice, InterfaceType, Range, ScanOption, ScanStatus,
-                   create_float_buffer, get_daq_device_inventory)
+                   create_float_buffer, get_daq_device_inventory, DigitalDirection, 
+                   DigitalPortIoType, DigitalPortType)
 
 # DAQ
 INTERFACE_TYPE = InterfaceType.USB
@@ -32,11 +33,13 @@ class SISBias:
     
     def __init__(self, config_file=None):
         
-        # Read parameters file
+        print("\nSIS BIAS CONTROL")
+
+        # Read configuration file
         if config_file is None:
             config_file = user_config_dir("rxlab-sis-bias")
         with open(config_file) as _fin:
-            self.params = json.load(_fin)
+            self.config = json.load(_fin)
 
         # Get all available DAQ devices
         devices = get_daq_device_inventory(INTERFACE_TYPE)
@@ -66,6 +69,7 @@ class SISBias:
         self.daq_device = DaqDevice(devices[descriptor_index])
         self.ao_device = self.daq_device.get_ao_device()
         self.ai_device = self.daq_device.get_ai_device()
+        self.dio_device = self.daq_device.get_dio_device()
 
         # Verify the specified DAQ device supports analog input
         if self.ai_device is None:
@@ -74,6 +78,10 @@ class SISBias:
         # Verify the specified DAQ device supports analog output
         if self.ao_device is None:
             raise RuntimeError('Error: The DAQ device does not support analog output')
+
+        # Verify the specified DAQ device supports digital input/output
+        if self.dio_device is None:
+            raise RuntimeError('Error: The DAQ device does not support digital input/output')
                 
         # Verify the device supports hardware pacing for analog output
         self.ao_info = self.ao_device.get_info()
@@ -92,6 +100,13 @@ class SISBias:
         self._ai_scan_status, self._ai_transfer_status = self.ai_device.get_scan_status()
         self.analog_input = None
 
+        # Initialize bit for controlling ambient load
+        self.dio_info = self.dio_device.get_info()
+        port_types = self.dio_info.get_port_types()
+        # port_info = self.dio_info.get_port_info(DigitalPortType.FIRSTPORTA)
+        self.dio_device.d_config_port(DigitalPortType.FIRSTPORTA, DigitalDirection.OUTPUT)
+        self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 0)
+
     def __repr__(self):
 
         return f"SIS bias control via MCC DAQ device: {self.daq_name}"
@@ -102,7 +117,7 @@ class SISBias:
 
     # Set control voltage ------------------------------------------------ ###
 
-    def set_control_voltage(self, voltage, vmax=3, verbose=False):
+    def set_control_voltage(self, voltage, vmax=5, verbose=False):
         """Set control voltage to a constant value (no sweep).
 
         Uses two channels to create a differential output (to allow negative
@@ -128,11 +143,11 @@ class SISBias:
             voltage = -vmax
 
         if voltage >= 0:
-            self.ao_device.a_out(self.params['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
-            self.ao_device.a_out(self.params['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, voltage)
+            self.ao_device.a_out(self.config['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
+            self.ao_device.a_out(self.config['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, voltage)
         else:
-            self.ao_device.a_out(self.params['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
-            self.ao_device.a_out(self.params['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
+            self.ao_device.a_out(self.config['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
+            self.ao_device.a_out(self.config['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
 
         if verbose:
             print(f"Control voltage set to {voltage:.1f} V")
@@ -141,7 +156,7 @@ class SISBias:
 
         # Starting value
         vctrl = vctrl_start
-        self.set_control_voltage(vctrl, vmax=2)
+        self.set_control_voltage(vctrl, vmax=5)
         time.sleep(sleep_time)
 
         # Iterate to find control voltage
@@ -284,8 +299,8 @@ class SISBias:
             output_buffer[i] = voltage[i]
 
         # Start the output scan.
-        vctrl_n_chan = self.params['VCTRL']['AO_N_CHANNEL']
-        vctrl_p_chan = self.params['VCTRL']['AO_P_CHANNEL']
+        vctrl_n_chan = self.config['VCTRL']['AO_N_CHANNEL']
+        vctrl_p_chan = self.config['VCTRL']['AO_P_CHANNEL']
         rate = self.ao_device.a_out_scan(vctrl_n_chan, vctrl_p_chan,
                                          AO_RANGE, samples_per_channel, 
                                          sample_frequency, SCAN_OPTIONS, 
@@ -317,7 +332,7 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return self._read_analog(self.params['VMON']['AI_CHANNEL']) / self.params['VMON']['GAIN'] * 1e3  - self.params['VMON']['OFFSET']
+        return self._read_analog(self.config['VMON']['AI_CHANNEL']) / self.config['VMON']['GAIN'] * 1e3  - self.config['VMON']['OFFSET']
         
     def read_current(self):
         """Read current monitor.
@@ -332,7 +347,7 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return self._read_analog(self.params['IMON']['AI_CHANNEL']) / self.params['IMON']['GAIN'] * 1e6 - self.params['IMON']['OFFSET']
+        return self._read_analog(self.config['IMON']['AI_CHANNEL']) / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
     
     def read_ifpower(self):
         """Read IF power from power meter/detector.
@@ -347,7 +362,7 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return self._read_analog(self.params['PIF']['AI_CHANNEL']) - self.params['PIF']['OFFSET']
+        return self._read_analog(self.config['PIF']['AI_CHANNEL']) - self.config['PIF']['OFFSET']
 
     def read_iv_curve(self, debug=False):
         """Read I-V curve.
@@ -366,9 +381,9 @@ class SISBias:
             print("Raw current range: {:.2f} to {:.2f} V".format(current.min(), current.max()))
 
         # Calibrate and correct offset
-        voltage = voltage / self.params['VMON']['GAIN'] - self.params['VMON']['OFFSET']
-        current = current / self.params['IMON']['GAIN'] - self.params['IMON']['OFFSET']
-        ifpower = ifpower - self.params['PIF']['OFFSET']
+        voltage = voltage / self.config['VMON']['GAIN'] - self.config['VMON']['OFFSET']
+        current = current / self.config['IMON']['GAIN'] - self.config['IMON']['OFFSET']
+        ifpower = ifpower - self.config['PIF']['OFFSET']
 
         return voltage, current, ifpower
 
@@ -406,8 +421,8 @@ class SISBias:
         self.analog_input = create_float_buffer(3, samples_per_channel)
 
         # Start the acquisition.
-        rate = self.ai_device.a_in_scan(self.params['VMON']['AI_CHANNEL'], 
-                                        self.params['PIF']['AI_CHANNEL'],
+        rate = self.ai_device.a_in_scan(self.config['VMON']['AI_CHANNEL'], 
+                                        self.config['PIF']['AI_CHANNEL'],
                                         AI_MODE, AI_RANGE, samples_per_channel,
                                         sample_frequency, SCAN_OPTIONS,
                                         AI_SCAN_FLAG, self.analog_input)
@@ -421,6 +436,18 @@ class SISBias:
             print(f'\t\tSweep period:        {sweep_period:.1f} s')
             print(f'\t\tSampling frequency:  {sample_frequency:.1f} Hz')
             print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)')
+
+    # Digital input / output --------------------------------------------- ###
+
+    def hot_load(self):
+        """Move ambient load to insert hot load."""
+
+        self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 0)
+
+    def cold_load(self):
+        """Move ambient load to insert cold load."""
+
+        self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 1)
 
     # Plot --------------------------------------------------------------- ###
 
