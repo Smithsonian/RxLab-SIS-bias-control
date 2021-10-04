@@ -13,8 +13,8 @@ args = parser.parse_args()
 
 # Default parameters
 params = dict(
-    VMIN=-2,
-    VMAX=2,
+    VMIN=-1,
+    VMAX=1,
     PERIOD=0.2,
     NPTS=2000,
     FREQ=0,
