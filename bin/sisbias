@@ -12,41 +12,14 @@ import os.path
 
 from appdirs import user_config_dir
 
-from sisbias import SISBias
+from sisbias import SISBias, progress_bar, ask_filename
 from qmix.mathfn.filters import gauss_conv
 
 try:
     plt.style.use(["science", "sans", "no-latex"])
-except:
+except ModuleNotFoundError:
     print("Matplotlib styles not found")
     print("\ttry: pip install SciencePlots")
-
-
-# Helper functions -----------------------------------------------------------
-
-def progress_bar(iteration, total, prefix='', length=50):
-    percent = "{:.1f}".format(100 * (iteration / float(total)))
-    filledLength = int(length * iteration // total)
-    bar = "X" * filledLength + '-' * (length - filledLength)
-    print(f'\r{prefix} |{bar}| {percent}%', end="\r")
-    if iteration == total: 
-        print()
-
-
-def ask_filename(msg="\tFile name: "):
-    print("")
-    while True:
-        fname = input(msg)
-        if fname == "":
-            return None
-        elif os.path.isfile(fname):
-            ans = input("\tFile already exists. Overwrite? [y/n] ")
-            if ans.lower() == "y":
-                print("")
-                return fname
-        else:
-            print("")
-            return fname
 
 
 # ----------------------------------------------------------------------------
@@ -57,13 +30,13 @@ parser.add_argument("-c", "--configfile", type=str, help="Configuration file", d
 parser.add_argument("-p", "--paramfile", type=str, help="Parameter file", default=None)
 args = parser.parse_args()
 
-# Location of config file
+# Location of configuration file
 if args.configfile is None:
     config_filename = user_config_dir("rxlab-sis-bias.config")
 else:
     config_filename = args.configfile
 
-# Location of param file
+# Location of parameter file
 if args.paramfile is None:
     param_filename = user_config_dir("rxlab-sis-bias.param")
 else:
@@ -140,32 +113,90 @@ try:
         # VBIAS: Set constant bias voltage
         elif command[0] == "VBIAS" or command[0] == "VB":
 
+            try:
+                iterations = int(command[2])
+            except:
+                iterations = 3
+
             vbias = float(command[1])
-            print("\n\tBias target:   {:6.2f} mV".format(vbias))
-            _, vctrl = bias.set_bias_voltage(vbias, verbose=True)
+            print("\n\tBias target:   {:6.2f} mV\n".format(vbias))
+            _, vctrl = bias.set_bias_voltage(vbias, iterations=iterations, verbose=True)
 
         # VMON: Read voltage monitor
         elif command[0] == "VMON":
 
-            vmon_mv = bias.read_voltage()
-            print("\n\tVoltage monitor: {:.2f} mV\n".format(vmon_mv))
+            try:
+                npts = int(command[1])
+            except:
+                npts = 1000
+
+            vmon_mv = np.zeros(npts)
+            for i in range(npts):
+                vmon_mv[i] = bias.read_voltage()
+            print(f"\n\tVoltage monitor: {np.mean(vmon_mv):.1f} +/- {np.std(vmon_mv):.1f} mV\n")
 
         # IMON: Read current monitor
         elif command[0] == "IMON":
 
-            imon_ua = bias.read_current() - param['IOFFSET']
-            print("\n\tCurrent monitor: {:.1f} mA\n".format(imon_ua))
+            try:
+                npts = int(command[1])
+            except:
+                npts = 1000
+
+            imon_ua = np.zeros(npts)
+            for i in range(npts):
+                imon_ua[i] = bias.read_current() - param['IOFFSET']
+            print(f"\n\tCurrent monitor: {np.mean(imon_ua):.1f} +/- {np.std(imon_ua):.1f} mA\n")
 
         # PIF: Read IF power
         elif command[0] == "PIF":
 
-            ifpower_uw = np.zeros(1000)
-            for i in range(1000):
-                ifpower_uw[i] = bias.read_ifpower()
-            mean_ifpower_uw = np.mean(ifpower_uw) - param["IFOFFSET"]
-            print("\n\tIF power: {:.4f} uW".format(mean_ifpower_uw))
-            print("\n\t          {:.4f} K\n".format(mean_ifpower_uw * param['IFCORR']))
+            # arg 1: number of points to average
+            try:
+                average = int(command[1])
+            except:
+                average = 1000
 
+            ifpower_uw = np.zeros(average)
+            for i in range(average):
+                ifpower_uw[i] = bias.read_ifpower()
+            mean_ifpower_uw = np.mean(ifpower_uw)
+            mean_ifpower_uw_cal = mean_ifpower_uw - param["IFOFFSET"]
+            print("\n\tIF power: {:.4f} uW".format(mean_ifpower_uw_cal))
+            print("  \t          {:.4f} uW (prior to calibration)".format(mean_ifpower_uw))
+            print("  \t          {:.4f} K\n".format(mean_ifpower_uw * param['IFCORR']))
+
+        # # MEASURE: Measure IV / IF curve
+        # elif command[0] == "CALIF":
+
+        #     print("\n\tCALIBRATE IF OFFSET:")
+
+        #     # arg 1: averaging
+        #     if len(command) > 1:
+        #         average = int(command[1])
+        #     else:
+        #         average = 10_000
+
+        #     # Sweep bias voltage and measure voltage / current / IF power
+        #     try:
+        #         bias.set_control_voltage(0)
+        #         time.sleep(0.2)
+        #         ptmp = np.empty(average)
+        #         for i in range(average):
+        #             ptmp[i] = bias.read_ifpower()  # A.U.
+        #         ifpower = np.mean(ptmp)
+        #     except KeyboardInterrupt:
+        #         print("")
+        #         plt.close('all')
+        #         continue  # TODO
+
+        #     # Correct for IF power offset
+        #     if param['LNA'] == 'off':
+        #         param['IFOFFSET'] = ifpower
+        #         print("\n\tUpdate IF offset:\t{:.4f} uW".format(param['IFOFFSET']))
+        #     print("\n\tMean IF power:       \t{:.4f} uW (uncalibrated)".format(ifpower))
+        #     print("  \tMean IF power:       \t{:.4f} uW (calibrated)".format(ifpower - param['IFOFFSET']))
+        #     print("")
 
         # Control bias voltage --------------------------------------------- #
 
@@ -336,7 +367,7 @@ try:
         # MEASURE: Measure IV / IF curve
         elif command[0] == "MEASURE" or command[0] == "M":
 
-            print("\n\tMEASURE I-V + IF CURVE:\n")
+            print("\n\tMEASURE I-V + IF CURVE:")
 
             # arg 1: number of points
             if len(command) > 1:
@@ -359,10 +390,13 @@ try:
             # Voltage range for linear fit (shot noise and normal resistance)
             vmin_slope = 4  * param['NJUNC']  # mV
             vmax_slope = 10 * param['NJUNC']  # mV
+            # vmin_slope = 3.5 * param['NJUNC']  # mV
+            # vmax_slope = 10  * param['NJUNC']  # mV
 
             # Parameters
             vmin, vmax = param["VMIN"], param["VMAX"]
             vctrl_sweep = np.linspace(vmin, vmax, npts)
+            print(f"\n\tVoltage sweep: {vmin:.1f} to {vmax:.1f} V\n")
 
             # Sweep bias voltage and measure voltage / current / IF power
             try:
@@ -394,7 +428,7 @@ try:
 
             # Correct for current offset
             if -param["VMIN"] == param["VMAX"]:  # update value
-                v_tmp = np.linspace(voltage.min()+0.5, voltage.max()-0.5, 101)
+                v_tmp = np.linspace(3*param['NJUNC'], voltage.max()-0.1, 101)
                 current_offset = np.mean(np.interp(v_tmp, voltage, current) -
                                          np.interp(v_tmp, -voltage[::-1], -current[::-1])) / 2
                 print("\n\tCurrent offset:\t\t{:.2f} uA".format(current_offset))
@@ -426,14 +460,17 @@ try:
             # Calibrate IF power
             if param['FREQ'] == 0 and param['LNA'] == 'on':
                 mask = (vmin_slope <= voltage) & (voltage <= vmax_slope)
-                try:
-                    pshot = np.polyfit(voltage[mask], ifpower[mask], 1)
-                    uw_to_k = 5.8 / pshot[0] / 3  # args.njunc  # TODO: check
-                    ifpower_k = ifpower * uw_to_k
-                    param['IFCORR'] = uw_to_k
-                    print("\n\tIF power, uW -> K:\t{:.2f}".format(uw_to_k))
-                except:
-                    ifpower_k = ifpower * param['IFCORR']
+                # try:
+                pshot = np.polyfit(voltage[mask], ifpower[mask], 1)
+                uw_to_k = 5.8 / pshot[0] / param['NJUNC']  # TODO: check
+                ifpower_k = ifpower * uw_to_k
+                pshot_k = np.polyfit(voltage[mask], ifpower[mask], 1)
+                print(f"\n\tShot noise slope: {1/pshot_k[0]:.2f} K/mV")
+                param['IFCORR'] = uw_to_k
+                print(f"\n\tIF power, uW -> K:\t{uw_to_k:.2f}")
+                # except:
+                #     print("fuck")
+                #     ifpower_k = ifpower * param['IFCORR']
             else:
                 ifpower_k = ifpower * param['IFCORR']
 
@@ -454,8 +491,8 @@ try:
 
             # Plot I-V curve
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
-            ax1.axhline(0, c='k', lw=0.5)
-            ax1.axvline(0, c='k', lw=0.5)
+            # ax1.axhline(0, c='k', lw=0.5)
+            # ax1.axvline(0, c='k', lw=0.5)
             if vmin == -vmax:
                 ax1.plot(-voltage, -current, 'k-', alpha=0.5)
             if param['FREQ'] != 0:
@@ -474,7 +511,7 @@ try:
             ax1.legend(loc=2, frameon=True)
 
             # Plot IF power
-            ax2.axvline(0, c='k', lw=0.5)
+            # ax2.axvline(0, c='k', lw=0.5)
             # if args.if_correction is not None or (args.shot and not args.pump):
             if param['FREQ'] == 0 and param['LNA'] == 'on':
                 ax2.plot(voltage, ifpower_k, 'k-', label='IF power')
@@ -501,11 +538,10 @@ try:
 
             filename = ask_filename("\tFilename for data: ")
             if filename is None:
-                print("\n\tNot any saving data.")
+                print("\n\tNot any saving data.\n")
             else:
                 header = "Voltage (mV), Current (uA), IF power (K)"
                 np.savetxt(filename, np.vstack((voltage, current, ifpower_k)).T, header=header)
-            print("")
 
         # CONST: Set constant bias and monitor V / I
         elif command[0] == "CONST":
@@ -523,25 +559,34 @@ try:
                 npts = 50_000
 
             # Set constant bias voltage
-            bias.set_control_voltage(vctrl)
+            bias.set_control_voltage(vctrl, verbose=True)
             time.sleep(1.5)
+            vmon = bias.read_voltage()
+            imon = bias.read_current() - param['IOFFSET']
+            print(f"Voltage monitor: {vmon:.1f} mV")
+            print(f"Current monitor: {imon:.1f} uA\n")
 
             # Sample voltage/current monitors
-            voltage = np.empty(npts)
-            current = np.empty(npts)
-            ifpower = np.empty(npts)
-            start = time.time()
-            for i in range(npts):
-                voltage[i] = bias.read_voltage()
-                current[i] = bias.read_current()
-                ifpower[i] = bias.read_ifpower()
-                if i % 1000 == 0 or i + 1 == npts:
-                    progress_bar(i + 1, npts, prefix="\tProgress: ")
-            current -= param['IOFFSET']
-            ifpower -= param['IFOFFSET']
-            total_time = time.time() - start
-            t = np.linspace(0, total_time, npts)
-            ifpower *= 10
+            try:
+                voltage = np.empty(npts)
+                current = np.empty(npts)
+                ifpower = np.empty(npts)
+                start = time.time()
+                for i in range(npts):
+                    voltage[i] = bias.read_voltage()
+                    current[i] = bias.read_current()
+                    ifpower[i] = bias.read_ifpower()
+                    if i % 1000 == 0 or i + 1 == npts:
+                        progress_bar(i + 1, npts, prefix="\tProgress: ")
+                current -= param['IOFFSET']
+                ifpower -= param['IFOFFSET']
+                total_time = time.time() - start
+                t = np.linspace(0, total_time, npts)
+                ifpower *= 10
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue  # TODO
 
             # Print statistics
             print("\n\tVoltage monitor:")
@@ -604,11 +649,11 @@ try:
 
             # Peak values
             idx = np.abs(voltage_fft).argmax()
-            print(f"\tPeak voltage:  {np.abs(voltage_fft[idx]):7.1f} at {f[idx]:4.1f} Hz")
+            print(f"\tPeak voltage:  {np.abs(voltage_fft[idx]):7.1f} at {abs(f[idx]):4.1f} Hz")
             idx = np.abs(current_fft).argmax()
-            print(f"\tPeak current:  {np.abs(current_fft[idx]):7.1f} at {f[idx]:4.1f} Hz")
+            print(f"\tPeak current:  {np.abs(current_fft[idx]):7.1f} at {abs(f[idx]):4.1f} Hz")
             idx = np.abs(ifpower_fft).argmax()
-            print(f"\tPeak IF power: {np.abs(ifpower_fft[idx]):7.1f} at {f[idx]:4.1f} Hz")
+            print(f"\tPeak IF power: {np.abs(ifpower_fft[idx]):7.1f} at {abs(f[idx]):4.1f} Hz")
             print("")
 
             # Plot
@@ -644,19 +689,6 @@ try:
             ax6.set_ylim(ymin=0)
             plt.show()
 
-            # # Plot
-            # ax6.plot(f, np.abs(ifpower_fft), 'k', lw=0.5, alpha=0.5)
-            # ax6.plot(f, gauss_conv(np.abs(ifpower_fft), 1), 'r', lw=2)
-            # ax6.axvspan(1.1*1, 1.3*1, color='r', alpha=0.2)
-            # ax5.set_xlabel("Time (s)")
-            # ax5.set_ylabel("IF Power (au)")
-            # ax6.set_xlabel("Frequency (Hz)")
-            # ax6.set_ylabel("IF Power")
-            # ax5.set_xlim([0, t.max()])
-            # ax6.set_xlim([-1, 5])
-            # ax6.set_ylim(ymin=0)
-            # plt.show()
-
         # RESISTANCE or R: Get resistance of I-V curve
         elif command[0] == "RESISTANCE" or command[0] == "R":
 
@@ -678,6 +710,18 @@ try:
 
             bias.plot()
 
+        # Digital input/output --------------------------------------------- #
+
+        # Hot load
+        elif command[0] == "HOT":
+
+            bias.hot_load()
+
+        # Cold load
+        elif command[0] == "COLD":
+
+            bias.cold_load()
+
         # Misc functions --------------------------------------------------- #
 
         # Y-factor
@@ -688,20 +732,28 @@ try:
                 continue
 
             yfactor = float(command[1]) / float(command[2])
-            th = 21 + 273
+            th = 23 + 273
             tc = 78
             tn = (th - yfactor * tc) / (yfactor - 1)
 
             print("\n\tY-factor:          {:5.2f}".format(yfactor))
             print("\n\tNoise temperature: {:5.1f} K\n".format(tn))
 
+        # ID: Print DAQ id nubmer
+        elif command[0] == "ID":
+            print("")
+            print(bias)
+            print("")
+
         # INFO: Print info
         elif command[0] == "INFO" or command[0] == "I":
 
             print("")
             for key, value in param.items():
-                sep = "\t" if len(key) > 8 else "\t\t"
-                print(f"\t{key}{sep}{value:10.1f}")
+                if isinstance(value, int) or isinstance(value, float):
+                    print(f"\t{key:15s}{value:.1f}")
+                else:
+                    print(f"\t{key:15s}{value}")
             print("")
 
         # STATUS: Print scan status
@@ -716,57 +768,6 @@ try:
         elif command[0] == "CLEAR" or command[0] == "C":
 
             plt.close("all")
-
-        # HELP: Print help
-        elif command[0] == "HELP" or command[0] == "H":
-
-            print("")
-            print("\tAvailable commands:")
-            print("\t\tHELP or H: Print help")
-            print("")
-
-            # Set parameters
-            print("\n\tSet parameters:")
-            print("\t\tVMIN <value>: Minimum control voltage for sweep or pulse, in [V]")
-            print("\t\tVMAX <value>: Maximum control voltage for sweep or pulse, in [V]")
-            print("\t\tPERIOD <value>: Period of sweep or pulse, in [s]")
-            print("\t\tNPTS <value>: Number of points in voltage sweep")
-            print("\t\tFREQ <value>: LO frequency")
-            print("\t\tNJUNC <value>: number of SIS junctions")
-            print("\t\tIOFFSET <value>: Current offset")
-            print("\t\tIFOFFSET <value>: IF power offset")
-            print("\t\tLNA <value>: LNA off / on")
-            print("\t\tIFCORR <value>: IF power W -> K")
-            print("")
-            print("\t\tVSET: Set constant control voltage")
-            print("\t\tVBIAS: Set constant bias voltage")
-            print("\t\tVMON: Read voltage monitor")
-            print("\t\tIMON: Read current monitor")
-            print("\t\tPIF: Read IF power from power meter")
-            print("")
-
-            # Bias voltage
-            print("\t\tSWEEP or START or S: Sweep control voltage (triangle wave)")
-            print("\t\tPULSE: Pulse control voltage (square wave)")
-            print("")
-
-            # Measure data
-            print("\t\tTUNE or T: Plot IV + IF curves for tuning LO power")
-            print("\t\tMONITOR or MON: Plot real time IV curve monitor")
-            print("\t\tMEASURE or M: Measure IV + IF curves")
-            print("\t\tCONSTANT or CONST: Set constant bias voltage and get statistics")
-            print("\t\tRESISTANCE or R: Calculate resistance")
-            print("\t\tPLOT or P: Plot I-V curve")
-            print("")
-            print("\t\tYFAC or Y: Calculate Y-factor and noise temperature")
-            print("")
-
-            # Misc
-            print("\t\tINFO: Print all parameters")
-            print("\t\tSTATUS: Print scan status")
-            print("\t\tCLEAR or C: Clear all plots")
-            print("\t\tSTOP or EXIT or Q: Close connection")
-            print("")
 
         # STOP: Stop bias and shutdown
         elif command[0] == "STOP" or command[0] == "EXIT" or command[0] == "Q":
