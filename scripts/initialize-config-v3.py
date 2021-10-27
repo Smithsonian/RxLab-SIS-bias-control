@@ -18,13 +18,14 @@ config = dict(
     # Voltage monitor
     VMON = dict(
         AI_CHANNEL = 0,
-        GAIN = -100, 
+        GAIN = -100.62, 
         OFFSET = 0,
         ),
     # Current monitor
     IMON = dict(
         AI_CHANNEL = 1,
-        GAIN = -1500, 
+        GAIN = -1501.8,  # Ryan's board + 10.0 ohm current sense resistor
+        # GAIN = -4520.4,  # Ryan's board + 30.1 ohm current sense resistor
         OFFSET = 0,
         ),
     # IF power
