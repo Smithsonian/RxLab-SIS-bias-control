@@ -319,7 +319,7 @@ class SISBias:
 
     # Read voltage & current monitor ------------------------------------- ###
 
-    def read_voltage(self):
+    def read_voltage(self, raw=False):
         """Read voltage monitor.
 
         Returns:
@@ -332,9 +332,12 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return self._read_analog(self.config['VMON']['AI_CHANNEL']) / self.config['VMON']['GAIN'] * 1e3  - self.config['VMON']['OFFSET']
-        
-    def read_current(self):
+        if raw:
+            return self._read_analog(self.config['VMON']['AI_CHANNEL'])
+        else:
+            return (self._read_analog(self.config['VMON']['AI_CHANNEL']) / self.config['VMON']['GAIN'] + self.config['VMON']['OFFSET']) * 1e3
+
+    def read_current(self, raw=False):
         """Read current monitor.
 
         Returns:
@@ -347,7 +350,10 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return self._read_analog(self.config['IMON']['AI_CHANNEL']) / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
+        if raw:
+            return self._read_analog(self.config['IMON']['AI_CHANNEL'])
+        else:
+            return (self._read_analog(self.config['IMON']['AI_CHANNEL']) / self.config['IMON']['GAIN'] + self.config['IMON']['OFFSET']) * 1e6
     
     def read_ifpower(self):
         """Read IF power from power meter/detector.
