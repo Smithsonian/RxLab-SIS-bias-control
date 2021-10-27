@@ -8,7 +8,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--configfile", type=str, help="Config file", default=None)
 args = parser.parse_args()
 
-# Default configuration values (Ryan's bias board)
+# Default configuration values (my bias board)
 config = dict(
     # Control voltage
     VCTRL = dict(
@@ -18,15 +18,14 @@ config = dict(
     # Voltage monitor
     VMON = dict(
         AI_CHANNEL = 0,
-        GAIN = -100.62, 
-        OFFSET = 0,
+        GAIN = 200.3517944, 
+        OFFSET = 1.17986e-5,
         ),
     # Current monitor
     IMON = dict(
         AI_CHANNEL = 1,
-        GAIN = -1501.8,  # Ryan's board + 10.0 ohm current sense resistor
-        # GAIN = -4520.4,  # Ryan's board + 30.1 ohm current sense resistor
-        OFFSET = 0,
+        GAIN = 6012.754964,
+        OFFSET = -5e-6,
         ),
     # IF power
     PIF = dict(
