@@ -16,7 +16,7 @@ def ask_filename(msg="\tFile name: "):
         fname = input(msg)
         if fname == "":
             return None
-        elif os.path.isfile(fname):
+        elif os.path.isfile(fname + ".dat") or os.path.isfile(fname + ".mdat"):
             ans = input("\tFile already exists. Overwrite? [y/n] ")
             if ans.lower() == "y":
                 return fname
