@@ -1,4 +1,4 @@
-"""Control SIS bias via MCC DAQ device."""
+"""Control the SIS bias via an MCC DAQ device."""
 
 import json
 import time
@@ -29,7 +29,7 @@ AI_SCAN_FLAG = AInScanFlag.DEFAULT
 
 
 class SISBias:
-    """Class for SIS bias control."""
+    """Class for controlling the SIS bias via the MCC DAQ."""
     
     def __init__(self, config_file=None):
         
@@ -134,12 +134,14 @@ class SISBias:
             self.ao_device.scan_stop()
 
         # Check if within limits
-        msg = "\t\t** warning: control voltage beyond limits ** "
+        msg = f"\n\t** warning: control voltage beyond limits ({-vmax:.1f} to {vmax:.1f} V) **"
         if voltage > vmax:
             print(msg)
+            print(f"\tSetting control voltage to {vmax:.1f} V\n")
             voltage = vmax
         elif voltage < -vmax:
             print(msg)
+            print(f"\tSetting control voltage to {-vmax:.1f} V\n")
             voltage = -vmax
 
         if voltage >= 0:
@@ -152,11 +154,11 @@ class SISBias:
         if verbose:
             print(f"Control voltage set to {voltage:.1f} V")
     
-    def set_bias_voltage(self, vbias_target, dvctrl=0.1, vctrl_start=0, sleep_time=0.1, iterations=3, verbose=False):
+    def set_bias_voltage(self, vbias_target, dvctrl=0.1, vctrl_start=0, sleep_time=0.1, iterations=3, vmax=5, verbose=False):
 
         # Starting value
         vctrl = vctrl_start
-        self.set_control_voltage(vctrl, vmax=5)
+        self.set_control_voltage(vctrl, vmax=vmax)
         time.sleep(sleep_time)
 
         # Iterate to find control voltage
@@ -171,7 +173,7 @@ class SISBias:
                 print("\tBias voltage:  {:6.2f} mV".format(vbias1))
             
             # Calculate derivative
-            self.set_control_voltage(vctrl + dvctrl, vmax=2)
+            self.set_control_voltage(vctrl + dvctrl, vmax=vmax)
             time.sleep(sleep_time)
             _vbias2 = np.zeros(100)
             for i in range(100):
@@ -182,7 +184,7 @@ class SISBias:
             # Update control voltage
             error = vbias1 - vbias_target
             vctrl -= error / der 
-            self.set_control_voltage(vctrl, vmax=2)
+            self.set_control_voltage(vctrl, vmax=vmax)
             time.sleep(sleep_time)
 
         # Read final value
@@ -192,7 +194,7 @@ class SISBias:
 
         return vbias, vctrl
 
-    def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, verbose=True):
+    def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, vlimit=5, verbose=True):
         """Sweep control voltage (triangle wave).
 
         Uses two channels to create a differential output (to allow negative
@@ -205,6 +207,22 @@ class SISBias:
         """
 
         # TODO: make vmin, vmax, period, sample_rate into properties??
+
+        # make sure vmin/vmax are within limits
+        vlimit = abs(vlimit)
+        msg = f"\n\t** warning: vmin or vmax is outside the limits ({-vlimit:.1f} to {vlimit:.1f} V) **"
+        if vmax > vlimit:
+            print(msg)
+            vmax = abs(vlimit)
+        if vmin > vlimit:
+            print(msg)
+            vmin = abs(vlimit)
+        if vmax < -vlimit:
+            print(msg)
+            vmax = -vlimit
+        if vmin < -vlimit:
+            print(msg)
+            vmin = -vlimit
 
         sample_period = sweep_period / npts
         sample_frequency = 1 / sample_period
@@ -232,7 +250,7 @@ class SISBias:
         # Start analog output scan
         self._sweep_control_voltage(vctrl_weave, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
 
-    def pulse_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, verbose=True):
+    def pulse_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, vlimit=5, verbose=True):
         """Pulse control voltage (square wave).
 
         Uses two channels to create a differential output (to allow negative
@@ -243,6 +261,22 @@ class SISBias:
             vmax (float): maximum voltage
 
         """
+
+        # make sure vmin/vmax are within limits
+        vlimit = abs(vlimit)
+        msg = f"vmin or vmax is outside limits ({vlimit:.1f} V)"
+        if vmax > vlimit:
+            print(msg)
+            vmax = abs(vlimit)
+        if vmin > vlimit:
+            print(msg)
+            vmin = abs(vlimit)
+        if vmax < -vlimit:
+            print(msg)
+            vmax = -vlimit
+        if vmin < -vlimit:
+            print(msg)
+            vmin = -vlimit
 
         sample_period = sweep_period / npts
         sample_frequency = 1 / sample_period

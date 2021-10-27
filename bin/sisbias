@@ -51,7 +51,7 @@ try:
     # Initialize bias control
     bias = SISBias(config_file=config_filename)
     param['VCTRL'] = 0
-    bias.set_control_voltage(param['VCTRL'])
+    bias.set_control_voltage(param['VCTRL'], vmax=param['VLIMIT'])
 
     # Save voltage / current gain to param
     param["VMONGAIN"] = bias.config['VMON']['GAIN']
@@ -138,7 +138,7 @@ try:
             else:
                 param['VCTRL'] = float(command[1])
                 print("\n\tControl voltage: {:6.2f} V".format(param['VCTRL']))
-                bias.set_control_voltage(param['VCTRL'])
+                bias.set_control_voltage(param['VCTRL'], vmax=param['VLIMIT'])
                 time.sleep(0.1)
                 vmon_mv = bias.read_voltage()
                 print("\tVoltage monitor: {:6.2f} mV\n".format(vmon_mv))
@@ -153,7 +153,7 @@ try:
                 iterations = 5
             vbias = float(command[1])
             print("\n\tBias target:   {:6.2f} mV\n".format(vbias))
-            _, param['VCTRL'] = bias.set_bias_voltage(vbias, iterations=iterations, verbose=True)
+            _, param['VCTRL'] = bias.set_bias_voltage(vbias, iterations=iterations, verbose=True, vmax=param["VLIMIT"])
 
         # Read values ------------------------------------------------------ #
 
@@ -261,7 +261,8 @@ try:
             bias.sweep_control_voltage(vmin=param['VMIN'],
                                        vmax=param['VMAX'],
                                        sweep_period=param['PERIOD'],
-                                       npts=param['NPTS'])
+                                       npts=param['NPTS'],
+                                       vlimit=param['VLIMIT'])
             bias.start_iv_monitor_scan(sweep_period=param['PERIOD'],
                                        npts=param['NPTS'])
             print("")
@@ -272,7 +273,8 @@ try:
             bias.pulse_control_voltage(vmin=param['VMIN'],
                                        vmax=param['VMAX'],
                                        sweep_period=param['PERIOD'],
-                                       npts=param['NPTS'])
+                                       npts=param['NPTS'], 
+                                       vlimit=param['VLIMIT'])
             bias.start_iv_monitor_scan(sweep_period=param['PERIOD'],
                                        npts=param['NPTS'])
             print("")
@@ -289,7 +291,8 @@ try:
             bias.sweep_control_voltage(vmin=param['VMIN'],
                                        vmax=param['VMAX'],
                                        sweep_period=1,
-                                       npts=1000)
+                                       npts=1000,
+                                       vlimit=param['VLIMIT'])
             bias.start_iv_monitor_scan(npts=1000, sweep_period=1)
             time.sleep(2)
             print("")
@@ -320,7 +323,7 @@ try:
                     i_results = np.zeros_like(vctrl_sweep)
                     p_results = np.zeros_like(vctrl_sweep)
                     for i, _vctrl in np.ndenumerate(vctrl_sweep):
-                        bias.set_control_voltage(_vctrl)
+                        bias.set_control_voltage(_vctrl, vmax=param['VLIMIT'])
                         time.sleep(0.1)
                         n_avg = 64
                         v_tmp, i_tmp, p_tmp = np.zeros(n_avg), np.zeros(n_avg), np.zeros(n_avg)
@@ -362,7 +365,7 @@ try:
                 period = param['PERIOD']
 
             # Start I-V bias sweeps
-            bias.sweep_control_voltage(param['VMIN'], param['VMAX'], npts=npts, sweep_period=period)
+            bias.sweep_control_voltage(param['VMIN'], param['VMAX'], npts=npts, sweep_period=period, vlimit=param['VLIMIT'])
             bias.start_iv_monitor_scan(npts=npts, sweep_period=period)
             time.sleep(period * 2)
             print("")
@@ -392,7 +395,7 @@ try:
                 try:
 
                     # Restart scans
-                    bias.sweep_control_voltage(param['VMIN'], param['VMAX'], npts=npts, sweep_period=period, verbose=False)
+                    bias.sweep_control_voltage(param['VMIN'], param['VMAX'], npts=npts, sweep_period=period, verbose=False, vlimit=param['VLIMIT'])
                     bias.start_iv_monitor_scan(npts=npts, sweep_period=period, verbose=False)
                     time.sleep(period)
 
@@ -451,7 +454,7 @@ try:
                 current = np.empty_like(vctrl_sweep)
                 ifpower = np.empty_like(vctrl_sweep)
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
-                    bias.set_control_voltage(_vctrl)
+                    bias.set_control_voltage(_vctrl, vmax=param['VLIMIT'])
                     time.sleep(sleep_time)
                     vtmp, itmp, ptmp = np.empty(average), np.empty(average), np.empty(average)
                     for j in range(average):
@@ -680,7 +683,7 @@ try:
                 npts = 50_000
 
             # Set constant bias voltage
-            bias.set_control_voltage(param['VCTRL'])
+            bias.set_control_voltage(param['VCTRL'], vmax=param['VLIMIT'])
             time.sleep(1.5)
             vmon = bias.read_voltage()
             imon = bias.read_current() - param['IOFFSET']

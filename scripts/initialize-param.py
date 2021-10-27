@@ -18,6 +18,7 @@ params = dict(
     VMAX=1,       # control voltage sweep, maximum value [V]
     PERIOD=0.2,   # control voltage sweep, period [s]
     NPTS=1000,    # control voltage sweep, number of points
+    VLIMIT=5,     # absolute maximum control voltage
     # Offsets / corrections
     IOFFSET=0,    # SIS current offset [uA]
     IFOFFSET=0,   # IF power offset [?W]
