@@ -28,6 +28,8 @@ params = dict(
     LNA='on',     # Cryogenic LNA status
     IFFREQ=7.5,   # IF frequency [GHz]
     ICOIL=0,      # Coil current [mA]
+    VMIN_SLOPE=3,
+    VMAX_SLOPE=20,
 )
 
 # Location of param file
