@@ -1,4 +1,7 @@
-"""Initialize configuration file for SIS bias control."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Initialize configuration file for SIS bias control: old bias board"""
 
 import json
 from appdirs import user_config_dir
