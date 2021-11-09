@@ -46,5 +46,8 @@ setup(
     ],
     scripts=[
         'bin/sisbias',
+        'bin/sisbias-init-config-v0',
+        'bin/sisbias-init-config-v3',
+        'bin/sisbias-init-param',
     ],
 )
