@@ -586,7 +586,7 @@ try:
             ax2.legend(loc=4, frameon=True)
             plt.show()
 
-            filename = ask_filename("\tFilename for data: ")
+            filename = ask_filename()
             if filename is None:
                 print("\n\tNot any saving data.\n")
             else:
@@ -656,9 +656,9 @@ try:
             plt.show()
 
             # Save data
-            filename = ask_filename("\tFilename for data: ")
+            filename = ask_filename()
             if filename is None:
-                print("\n\tNot any saving data.\n")
+                print("\tNot any saving data.\n")
             else:
                 # Save data
                 header = "IF frequency (GHz), IF power (AU), IF std dev (AU)"
