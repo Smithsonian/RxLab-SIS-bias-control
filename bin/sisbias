@@ -128,15 +128,15 @@ try:
                 try:
                     param['FREQ'] = float(command[1])
                     if param['FREQ'] != 0:
-                        print(f"\n\tSource frequency: {param['FREQ'] / 18:5.2f} GHz")
-                        print(f"\tGunn frequency:   {param['FREQ'] / 3:5.2f} GHz")
-                        print(f"\tLO frequency:     {param['FREQ']:5.2f} GHz\n")
+                        print(f"\n\tSource frequency: {param['FREQ']/18:6.2f} GHz (x18)")
+                        print(f"\tGunn frequency:   {param['FREQ']/3:6.2f} GHz (x3)")
+                        print(f"\tLO frequency:     {param['FREQ']:6.2f} GHz\n")
                     else:
                         print("\n\tDC (no LO pumping)\n")
                 except ValueError:
                     print("\n\tError: Frequency must be a float.\n")
             else:
-                print(f"\n\tLO frequency: {param['FREQ']:.1} GHz\n")
+                print(f"\n\tLO frequency: {param['FREQ']:.1f} GHz\n")
 
         # IFFREQ: Set IF frequency
         elif command[0] == "IFFREQ" or command[0] == "IF":
@@ -997,9 +997,9 @@ try:
         # HELP: Print help for most useful commands
         elif command[0] == "HELP" or command[0] == "H":
 
-            print("\n\tMost useful commands:\n")
-            print("\tVMIN <value>:\tMinimum voltage for sweep")
-            print("\tVMAX <value>:\tMaximum voltage for sweep\n")
+            print("\n\tMost useful commands/parameters:\n")
+            print("\tVMIN <value>:\tMinimum voltage for sweep, in units [V]")
+            print("\tVMAX <value>:\tMaximum voltage for sweep, in units [V]\n")
             print("\tV <value>:   \tSet control voltage to constant value, units [V]")
             print("\tVB <value>:  \tSet bias voltage to constant value, units [mV]\n")
             print("\tVMON:        \tRead the voltage monitor")
@@ -1010,6 +1010,8 @@ try:
             print("\tMON:         \tPlot IV/IF curves in real-time\n")
             print("\tC:           \tClear all plots")
             print("\tQ:           \tExit application\n")
+            print("\tFor all of these commands, you can enter 'H' for more help")
+            print("\t(e.g., 'M H').\n")
 
         # ID: Print DAQ ID nubmer
         elif command[0] == "ID":
