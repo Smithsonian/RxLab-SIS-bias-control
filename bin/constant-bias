@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from appdirs import user_config_dir
-from qmix.mathfn.filters import gauss_conv
+from sisbias.filters import gauss_conv
 
 import sys
 sys.path.append("..")

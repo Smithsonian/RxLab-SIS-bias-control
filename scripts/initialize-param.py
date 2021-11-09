@@ -24,12 +24,12 @@ params = dict(
     IFOFFSET=0,    # IF power offset [?W]
     IFCORR=1,      # IF conversion [K/?W]
     # Misc
-    FREQ=0,        # LO frequency [GHz]
-    LNA='on',      # Cryogenic LNA status
-    IFFREQ=7.5,    # IF frequency [GHz]
-    ICOIL=0,       # Coil current [mA]
-    VMIN_SLOPE=12, #
-    VMAX_SLOPE=30, #
+    FREQ=0,       # LO frequency [GHz]
+    LNA='on',     # Cryogenic LNA status
+    IFFREQ=7.5,   # IF frequency [GHz]
+    ICOIL=0,      # Coil current [mA]
+    VMIN_SLOPE=12,
+    VMAX_SLOPE=20,
 )
 
 # Location of param file

@@ -13,13 +13,16 @@ import os.path
 from appdirs import user_config_dir
 
 from sisbias import SISBias, progress_bar, ask_filename
-from qmix.mathfn.filters import gauss_conv
+from sisbias.filters import gauss_conv
 from labinstruments.microlambda import YigFilter
 
 try:
     plt.style.use(["science", "sans", "no-latex"])
 except ModuleNotFoundError:
     print("Matplotlib styles not found")
+    print("\ttry: pip install SciencePlots")
+except OSError:
+    print("Matplot styles not found")
     print("\ttry: pip install SciencePlots")
 
 # ----------------------------------------------------------------------------
