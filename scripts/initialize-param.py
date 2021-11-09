@@ -11,23 +11,25 @@ args = parser.parse_args()
 # Default parameters
 params = dict(
     # General info
-    DEVICE="X",   # device number
-    NJUNC=1,      # number of series SIS junctions
+    DEVICE="X",    # device number
+    NJUNC=1,       # number of series SIS junctions
     # Voltage sweep
-    VMIN=-1,      # control voltage sweep, minimum value [V]
-    VMAX=1,       # control voltage sweep, maximum value [V]
-    PERIOD=0.2,   # control voltage sweep, period [s]
-    NPTS=1000,    # control voltage sweep, number of points
-    VLIMIT=5,     # absolute maximum control voltage
+    VMIN=-1,       # control voltage sweep, minimum value [V]
+    VMAX=1,        # control voltage sweep, maximum value [V]
+    PERIOD=0.2,    # control voltage sweep, period [s]
+    NPTS=1000,     # control voltage sweep, number of points
+    VLIMIT=5,      # absolute maximum control voltage
     # Offsets / corrections
-    IOFFSET=0,    # SIS current offset [uA]
-    IFOFFSET=0,   # IF power offset [?W]
-    IFCORR=1,     # IF conversion [K/?W]
+    IOFFSET=0,     # SIS current offset [uA]
+    IFOFFSET=0,    # IF power offset [?W]
+    IFCORR=1,      # IF conversion [K/?W]
     # Misc
-    FREQ=0,       # LO frequency [GHz]
-    LNA='on',     # Cryogenic LNA status
-    IFFREQ=7.5,   # IF frequency [GHz]
-    ICOIL=0,      # Coil current [mA]
+    FREQ=0,        # LO frequency [GHz]
+    LNA='on',      # Cryogenic LNA status
+    IFFREQ=7.5,    # IF frequency [GHz]
+    ICOIL=0,       # Coil current [mA]
+    VMIN_SLOPE=12, #
+    VMAX_SLOPE=30, #
 )
 
 # Location of param file
