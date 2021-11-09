@@ -45,9 +45,6 @@ setup(
         "Topic :: Scientific/Engineering",
     ],
     scripts=[
-        'bin/monitor',
         'bin/sisbias',
-        'bin/constant-bias',
-        'bin/measure-iv',
     ],
 )
