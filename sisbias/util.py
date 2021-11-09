@@ -10,10 +10,11 @@ def progress_bar(iteration, total, prefix='', length=50):
         print("")
 
 
-def ask_filename(msg="\tFile name: "):
+def ask_filename(msg="\tFile name (omit extention): "):
     print("")
     while True:
         fname = input(msg)
+        print("")
         if fname == "":
             return None
         elif os.path.isfile(fname + ".dat") or os.path.isfile(fname + ".mdat"):
@@ -21,5 +22,4 @@ def ask_filename(msg="\tFile name: "):
             if ans.lower() == "y":
                 return fname
         else:
-            print("")
             return fname
