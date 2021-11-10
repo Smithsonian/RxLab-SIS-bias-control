@@ -37,7 +37,7 @@ class SISBias:
 
         # Read configuration file
         if config_file is None:
-            config_file = user_config_dir("rxlab-sis-bias")
+            config_file = user_config_dir("rxlab-sis-bias.config")
         with open(config_file) as _fin:
             self.config = json.load(_fin)
 
