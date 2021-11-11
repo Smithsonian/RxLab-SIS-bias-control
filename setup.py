@@ -12,8 +12,6 @@ from os import path
 
 from setuptools import find_packages, setup
 
-import sisbias
-
 
 def read(*filenames):
     buf = []
@@ -26,14 +24,14 @@ def read(*filenames):
 
 setup(
     name="RxLab-SIS-bias",
-    version=sisbias.__version__,
+    version="0.0.1.dev",
     author="John Garrett",
     author_email="john.garrett@cfa.harvard.edu",
     description="Control the SIS bias via the MCC DAQ device",
     url="https://github.com/Smithsonian/RxLab-SIS-bias/",
     packages=find_packages(),
     install_requires=[
-        'appdirs', 'numpy', 'matplotlib'
+        'appdirs', 'numpy', 'matplotlib', 'uldaq',
     ],
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
