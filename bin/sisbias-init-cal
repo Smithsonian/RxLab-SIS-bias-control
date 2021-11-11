@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Initialize calibration file for RxLab-SIS-bias-control"""
+
+import json
+from appdirs import user_config_dir
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-c", "--calfile", type=str, help="Calibration file", default=None)
+args = parser.parse_args()
+
+# Default calibration parameters
+params = dict(
+    IOFFSET=0,     # dc current offset [uA]
+    IFOFFSET=0,    # IF power offset [AU]
+    IFCORR=1,      # IF conversion [K/AU]
+)
+
+# Location of calibration file
+if args.calfile is None:
+    filename = user_config_dir("rxlab-sis-bias.cal")
+else:
+    filename = args.calfile
+
+# Save config file
+with open(filename, 'w') as fout:
+    json.dump(params, fout, indent=4)
+print(f"\nCalibration file saved to: {filename}\n")
