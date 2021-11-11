@@ -8,10 +8,8 @@ def gauss_conv(x, sigma=10, ext_x=3):
 
     Args:
         x (ndarray): noisy data
-        sigma (float): std. dev. of Gaussian curve, given as number of data
-                       points
-        ext_x (float): Gaussian curve will extend from ext_x * sigma in each
-                       direction
+        sigma (float): std. dev. of Gaussian curve, given as number of data points
+        ext_x (float): Gaussian curve will extend from ext_x * sigma in each direction
 
     Returns:
         ndarray: filtered data
@@ -52,3 +50,16 @@ def _gauss(sigma, n_sigma=3):
     y = 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-0.5 * (x / sigma)**2)
 
     return y
+
+
+if __name__ == "__main__":
+
+    import matplotlib.pyplot as plt
+
+    x = np.linspace(0, 10, 501)
+    y = np.sin(x) + (np.random.random(501) - 0.5) / 2
+
+    plt.plot(x, y, 'k', lw=0.5)
+    plt.plot(x, np.sin(x), 'b')
+    plt.plot(x, gauss_conv(y), 'r')
+    plt.show()
