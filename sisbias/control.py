@@ -683,7 +683,7 @@ class SISBias:
     #         progress_bar(i[0] + 1, npts, prefix="\tMeasure voltage offset: ")
     #         self.set_control_voltage(_v)
     #         time.sleep(0.1)
-    #         vsis[i], _, isis[i], _, _, _ = self.read_all(average=average)
+    #         vsis[i], isis[i], _ = self.read_all(average=average)
     #     vtmp = np.linspace(vsis.min(), vsis.max(), 1000)
     #     itmp = np.interp(vtmp, vsis, isis)
     #     idx = np.abs(itmp).argmin()
@@ -696,7 +696,7 @@ class SISBias:
 
     # Measure I-V/IF data ------------------------------------------------ ###
 
-    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, msg=None):
+    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None):
         """Measure I-V curve and IF power as a function of bias voltage.
 
         Args:
@@ -706,6 +706,7 @@ class SISBias:
             vmax (float): maximum control voltage, in [V], default is -1
             vlimit (float): hard limit on control voltage, in [V], default is 1
             sleep_time (float): sleep time between voltage points, in [s], default is 0.1
+            stats (bool): return statistics, default is True
             msg (str): progress message
 
         Returns:
@@ -722,7 +723,7 @@ class SISBias:
             for i, _vctrl in np.ndenumerate(vctrl_sweep):
                 self.set_control_voltage(_vctrl, vlimit=vlimit)
                 time.sleep(sleep_time)
-                results[:, i] = np.array(self.read_all(average=average)).reshape(6, 1)
+                results[:, i] = np.array(self.read_all(average=average, stats=stats)).reshape(6, 1)
                 progress_bar(i[0] + 1, len(vctrl_sweep), prefix=msg)
         except KeyboardInterrupt:
             print("")
