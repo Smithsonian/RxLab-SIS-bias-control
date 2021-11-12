@@ -195,13 +195,13 @@ try:
             # arg 1: target value
             try: 
                 vbias = float(command[1])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 vbias = 0 
 
             # arg 2: number of iterations
             try:
                 iterations = int(command[2])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 iterations = 3
             
             print(f"\n\tBias target:   {vbias:6.2f} mV\n")
@@ -221,7 +221,7 @@ try:
             try: 
                 vbias = float(command[1])
                 param['VMIN'] = vbias / 1000 * bias.config['VMON']['GAIN']
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 vbias = param['VMIN'] * 1000 / bias.config['VMON']['GAIN']
 
             print(f"\n\tBias voltage (min):    {vbias:.1f} mV")
@@ -241,7 +241,7 @@ try:
             try: 
                 vbias = float(command[1])
                 param['VMAX'] = vbias / 1000 * bias.config['VMON']['GAIN']
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 vbias = param['VMAX'] * 1000 / bias.config['VMON']['GAIN']
 
             print(f"\n\tBias voltage (max):    {vbias:.1f} mV")
@@ -317,7 +317,7 @@ try:
             # arg 1: number of points to average
             try:
                 average = int(command[1])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 average = 2_000
 
             _ = bias.read_voltage(average=average, verbose=True)
@@ -335,7 +335,7 @@ try:
             # arg 1: number of points to average
             try:
                 average = int(command[1])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 average = 2_000
 
             _ = bias.read_current(average=average, verbose=True)
@@ -353,7 +353,7 @@ try:
             # arg 1: number of points to average
             try:
                 average = int(command[1])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 average = 2_000
 
             _ = bias.read_ifpower(average=average, verbose=True)
@@ -371,7 +371,7 @@ try:
             # arg 1: number of points to average
             try:
                 average = int(command[1])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 average = 2_000
 
             vraw_avg, vraw_std = bias.read_voltage(average=average, stats=True, raw=True)
@@ -390,7 +390,7 @@ try:
             # arg 1: number of points to average
             try:
                 average = int(command[1])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 average = 2_000
 
             iraw_avg, iraw_std = bias.read_current(average=average, stats=True, raw=True)
@@ -408,7 +408,7 @@ try:
 
             try:
                 average = int(command[1])
-            except (IndexError, ValueError) as e
+            except (IndexError, ValueError) as e:
                 average = 1000
 
             print("\n\tVoltage\t\tCurrent\t\tIF power\n")
@@ -639,7 +639,7 @@ try:
             if param['FREQ'] == 0:
                 if pnormal is not None:
                     ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$".format(rnormal))
-                if v_intercept is not None
+                if v_intercept is not None:
                     ax1.plot(v_intercept, 0, 'r*', ms=10, label="$x$-intercept")
             ax1.set_xlabel("Voltage (mV)")
             ax1.set_ylabel("Current (uA)")
@@ -892,6 +892,8 @@ try:
                 continue
 
             voltage, current, _ = bias.read_iv_curve_buffer()
+            voltage *= 1e-3
+            current *= 1e-6
             idx = current.argsort()
             p, cov = np.polyfit(current[idx], voltage[idx], 1, cov=True)
             perr = np.sqrt(np.diag(cov))
