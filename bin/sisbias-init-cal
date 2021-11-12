@@ -13,6 +13,7 @@ args = parser.parse_args()
 
 # Default calibration parameters
 params = dict(
+    VOFFSET=0,     # dc voltage offset [mV]
     IOFFSET=0,     # dc current offset [uA]
     IFOFFSET=0,    # IF power offset [AU]
     IFCORR=1,      # IF conversion [K/AU]
