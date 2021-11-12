@@ -1,4 +1,4 @@
-"""Control the SIS bias via an MCC DAQ device."""
+"""Control the SIS bias using an MCC DAQ device."""
 
 import json
 import time
@@ -8,11 +8,14 @@ import numpy as np
 import uldaq
 from appdirs import user_config_dir
 from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag,
-                   DaqDevice, InterfaceType, Range, ScanOption, ScanStatus,
-                   create_float_buffer, get_daq_device_inventory, DigitalDirection, 
-                   DigitalPortIoType, DigitalPortType)
+                   DaqDevice, DigitalDirection, DigitalPortType, InterfaceType,
+                   Range, ScanOption, ScanStatus, create_float_buffer,
+                   get_daq_device_inventory)
 
-# DAQ
+from sisbias.filters import gauss_conv
+from sisbias.util import progress_bar
+
+# DAQ interface
 INTERFACE_TYPE = InterfaceType.USB
 
 # DAQ output channels
@@ -31,17 +34,25 @@ AI_SCAN_FLAG = AInScanFlag.DEFAULT
 class SISBias:
     """Class for controlling the SIS bias via the MCC DAQ."""
     
-    def __init__(self, config_file=None):
+    def __init__(self, config_file=None, cal_file=None):
         
         print("\nSIS BIAS CONTROL")
 
         # Read configuration file
-        if config_file is None:
-            config_file = user_config_dir("rxlab-sis-bias.config")
+        self.config_file = config_file
+        if self.config_file is None:
+            self.config_file = user_config_dir("rxlab-sis-bias.config")
         with open(config_file) as _fin:
             self.config = json.load(_fin)
 
-        # Get all available DAQ devices
+        # Read calbration file file
+        self.cal_file = cal_file
+        if self.cal_file is None:
+            self.cal_file = user_config_dir("rxlab-sis-bias.cal")
+        with open(self.cal_file) as _fin:
+            self.cal = json.load(_fin)
+
+        # Find all available DAQ devices
         devices = get_daq_device_inventory(INTERFACE_TYPE)
         number_of_devices = len(devices)
 
@@ -49,17 +60,16 @@ class SISBias:
         if number_of_devices == 0:
             raise RuntimeError('Error: No DAQ devices found')
             
-        # Print all available devices
-        print('\nFound', number_of_devices, 'DAQ device(s):')
+        # Print all available DAQ devices
+        print(f'\nFound {number_of_devices} DAQ device(s):')
         for i in range(number_of_devices):
-            print('  [', i, '] ', devices[i].product_name, ' (',
-                  devices[i].unique_id, ')', sep='')
+            print(f'  [{i}] {devices[i].product_name} ({devices[i].unique_id})')
                 
         # Choose DAQ device
         if number_of_devices == 1:
             descriptor_index = 0
         else:
-            msg = '\nPlease select a DAQ device (between 0 and ' + str(number_of_devices - 1) + '): '
+            msg = f'\nPlease select a DAQ device (between 0 and {number_of_devices-1}): '
             descriptor_index = input(msg)
             descriptor_index = int(descriptor_index)
             if descriptor_index not in range(number_of_devices):
@@ -102,8 +112,6 @@ class SISBias:
 
         # Initialize bit for controlling ambient load
         self.dio_info = self.dio_device.get_info()
-        port_types = self.dio_info.get_port_types()
-        # port_info = self.dio_info.get_port_info(DigitalPortType.FIRSTPORTA)
         self.dio_device.d_config_port(DigitalPortType.FIRSTPORTA, DigitalDirection.OUTPUT)
         self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 0)
 
@@ -117,14 +125,13 @@ class SISBias:
 
     # Set control voltage ------------------------------------------------ ###
 
-    def set_control_voltage(self, voltage, vmax=5, verbose=False):
+    def set_control_voltage(self, voltage, vlimit=5, verbose=False):
         """Set control voltage to a constant value (no sweep).
 
-        Uses two channels to create a differential output (to allow negative
-        control voltages).
-
         Args:
-            voltage: control voltage
+            voltage (float): control voltage, in [V]
+            vlimit (float): hard limit on control voltage, in [V]
+            verbose (bool): print to terminal
 
         """
 
@@ -134,16 +141,16 @@ class SISBias:
             self.ao_device.scan_stop()
 
         # Check if within limits
-        msg = f"\n\t** warning: control voltage beyond limits ({-vmax:.1f} to {vmax:.1f} V) **"
-        if voltage > vmax:
-            print(msg)
-            print(f"\tSetting control voltage to {vmax:.1f} V\n")
-            voltage = vmax
-        elif voltage < -vmax:
-            print(msg)
-            print(f"\tSetting control voltage to {-vmax:.1f} V\n")
-            voltage = -vmax
+        if voltage > vlimit:
+            print(f"\n\t** warning: control voltage beyond limits ({-vlimit:.1f} to {vlimit:.1f} V) **")
+            print(f"\tSetting control voltage to {vlimit:.1f} V\n")
+            voltage = vlimit
+        elif voltage < -vlimit:
+            print(f"\n\t** warning: control voltage beyond limits ({-vlimit:.1f} to {vlimit:.1f} V) **")
+            print(f"\tSetting control voltage to {-vlimit:.1f} V\n")
+            voltage = -vlimit
 
+        # Use two unipolar outputs to create differential output
         if voltage >= 0:
             self.ao_device.a_out(self.config['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
             self.ao_device.a_out(self.config['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, voltage)
@@ -154,59 +161,75 @@ class SISBias:
         if verbose:
             print(f"Control voltage set to {voltage:.1f} V")
     
-    def set_bias_voltage(self, vbias_target, dvctrl=0.1, vctrl_start=0, sleep_time=0.1, iterations=3, vmax=5, verbose=False):
+    def set_bias_voltage(self, vbias=0, dv=0.02, vstart=None, sleep_time=0.1, iterations=3, vlimit=5, verbose=False):
+        """Set bias voltage to desired value.
+
+        Uses Newton's method to hone in on the target value.
+
+        Args:
+            vbias (float): target bias voltage, in [mV], default is 0
+            dv (float): voltage step for derivative, in [V], default is 0.02
+            vstart (float): starting control voltage, in [V], default is None
+            sleep_time (float): sleep time between voltage changes, in [s], default is 0.1
+            iterations (int): iterations, default is 3
+            vlimit (float): hard limit for control voltage, in [V], default is 5
+            verbose (bool): print to terminal, default is False
+
+        """
 
         # Starting value
-        vctrl = vctrl_start
-        self.set_control_voltage(vctrl, vmax=vmax)
+        if vstart is not None:
+            vctrl = vstart
+        else:
+            vctrl = vbias / 1000 * self.config['VMON']['GAIN']
+        self.set_control_voltage(vctrl, vlimit=vlimit)
         time.sleep(sleep_time)
+
+        # Read bias voltage
+        vbias1 = self.read_voltage(average=100)
+        if verbose:
+            print("\tBias voltage:  {:6.2f} mV".format(vbias1))
+
+        if iterations is None or iterations == 0:
+            return 
 
         # Iterate to find control voltage
         for _ in range(iterations):
-
-            # Read bias voltage
-            _vbias1 = np.zeros(100)
-            for i in range(100):
-                _vbias1[i] = self.read_voltage()
-            vbias1 = np.mean(_vbias1)
-            if verbose:
-                print("\tBias voltage:  {:6.2f} mV".format(vbias1))
             
             # Calculate derivative
-            self.set_control_voltage(vctrl + dvctrl, vmax=vmax)
+            self.set_control_voltage(vctrl + dv, vlimit=vlimit)
             time.sleep(sleep_time)
-            _vbias2 = np.zeros(100)
-            for i in range(100):
-                _vbias2[i] = self.read_voltage()
-            vbias2 = np.mean(_vbias2)
-            der = (vbias2 - vbias1) / dvctrl
+            vbias2 = self.read_voltage(average=100)
+            der = (vbias2 - vbias1) / dv
 
             # Update control voltage
-            error = vbias1 - vbias_target
+            error = vbias1 - vbias
             vctrl -= error / der 
-            self.set_control_voltage(vctrl, vmax=vmax)
+            self.set_control_voltage(vctrl, vlimit=vlimit)
             time.sleep(sleep_time)
 
-        # Read final value
-        vbias = self.read_voltage()
-        if verbose:
-            print("\tBias voltage:  {:6.2f} mV\n".format(vbias))
+            # Read bias voltage
+            vbias1 = self.read_voltage(average=100)
+            if verbose:
+                print("\tBias voltage:  {:6.2f} mV".format(vbias1))
 
-        return vbias, vctrl
+        return vbias1, vctrl
 
-    def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, vlimit=5, verbose=True):
+    def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5, vlimit=5, verbose=True):
         """Sweep control voltage (triangle wave).
 
         Uses two channels to create a differential output (to allow negative
         control voltages).
 
         Args:
-            vmin (float): minimum voltage
-            vmax (float): maximum voltage
+            vmin (float): minimum control voltage, in [V], default is -1
+            vmax (float): maximum control voltage, in [V], default is 1
+            npts (int): number of points, default is 1000
+            sweep_period (float): sweep period, in [s], default is 5.0
+            vlimit (float): hard limit for control voltage, in [V], default is 5
+            verbose (bool): print to terminal, default is False
 
         """
-
-        # TODO: make vmin, vmax, period, sample_rate into properties??
 
         # make sure vmin/vmax are within limits
         vlimit = abs(vlimit)
@@ -226,13 +249,7 @@ class SISBias:
 
         sample_period = sweep_period / npts
         sample_frequency = 1 / sample_period
-        samples_per_period = int(2 * npts)
         samples_per_channel = int(npts)
-
-        # # Stop current scan
-        # self.update_ao_scan_status()
-        # if self._ao_scan_status == ScanStatus.RUNNING:
-        #     self.ao_device.scan_stop()
 
         # Build control voltage (triangle wave)
         vctrl_up = np.linspace(vmin, vmax, samples_per_channel // 2)
@@ -248,9 +265,9 @@ class SISBias:
         vctrl_weave[1::2] = vctrl_p
 
         # Start analog output scan
-        self._sweep_control_voltage(vctrl_weave, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
+        self._sweep(vctrl_weave, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
 
-    def pulse_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5.0, vlimit=5, verbose=True):
+    def pulse_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5, vlimit=5, verbose=True):
         """Pulse control voltage (square wave).
 
         Uses two channels to create a differential output (to allow negative
@@ -259,6 +276,10 @@ class SISBias:
         Args:
             vmin (float): minimum voltage
             vmax (float): maximum voltage
+            npts (int): number of points, default is 1000
+            sweep_period (float): sweep period, in [s], default is 5.0
+            vlimit (float): hard limit for control voltage, in [V], default is 5
+            verbose (bool): print to terminal, default is False
 
         """
 
@@ -280,13 +301,7 @@ class SISBias:
 
         sample_period = sweep_period / npts
         sample_frequency = 1 / sample_period
-        samples_per_period = int(2 * npts)
         samples_per_channel = int(npts)
-
-        # Stop current scan
-        # self.update_ao_scan_status()
-        # if self._ao_scan_status == ScanStatus.RUNNING:
-        #     self.ao_device.scan_stop()
 
         # Build control voltage (square wave)
         vctrl_p = vmax * np.r_[np.ones(samples_per_channel//2),
@@ -298,19 +313,18 @@ class SISBias:
         vctrl[1::2] = vctrl_p
 
         # Start analog output scan
-        self._sweep_control_voltage(vctrl, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
+        self._sweep(vctrl, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
 
-    def _sweep_control_voltage(self, voltage, sweep_period=5.0, sample_frequency=1000, verbose=True):
+    def _sweep(self, voltage, sweep_period=5, sample_frequency=1000, verbose=True):
         """Sweep control voltage.
 
         Args:
             voltage (np.ndarray): voltage array for buffer
             sweep_period (float): period
-            sample_frequency (int): sample frequency
+            sample_frequency (float): sample frequency
 
         """
 
-        num_channels = 2
         samples_per_period = int(sample_frequency * sweep_period)
         samples_per_channel = int(samples_per_period)
 
@@ -322,7 +336,7 @@ class SISBias:
         # Create output buffer for control voltage
         output_buffer = create_float_buffer(2, samples_per_channel)
 
-        # Min/max value
+        # Min / max value
         control_signal = voltage[1::2] - voltage[::2]
         vmin = control_signal.min()
         vmax = control_signal.max()
@@ -341,23 +355,26 @@ class SISBias:
                                          SCAN_FLAGS, output_buffer)
 
         if verbose:
+            vbmin = vmin / self.config['VMON']['GAIN'] * 1000
+            vbmax = vmax / self.config['VMON']['GAIN'] * 1000
             print("\n\tSweep control voltage:")
             print(f'\t\t{self.daq_name}: ready')
-            print(f'\t\tDAC range:           {AO_RANGE.name}')
-            print(f'\t\tVoltage range:       {vmin:.1f} to {vmax:.1f} V')
-            print(f'\t\tVoltage points:      {npts}')
-            print(f'\t\tSweep frequency:     {1 / sweep_period:.1f} Hz')
-            print(f'\t\tSweep period:        {sweep_period:.1f} s')
-            print(f'\t\tSampling frequency:  {sample_frequency:.1f} Hz')
-            print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)')
+            print(f'\t\tDAC range:             {AO_RANGE.name}')
+            print(f'\t\tControl voltage range: {vmin:.1f} to {vmax:.1f} V')
+            print(f'\t\tBias voltage range:    {vbmin:.1f} to {vbmax:.1f} mV')
+            print(f'\t\tVoltage points:        {npts}')
+            print(f'\t\tSweep frequency:       {1 / sweep_period:.1f} Hz')
+            print(f'\t\tSweep period:          {sweep_period:.1f} s')
+            print(f'\t\tSampling frequency:    {sample_frequency:.1f} Hz')
+            print(f'\t\tSampling frequency:    {rate:.1f} Hz (actual)')
 
     # Read voltage & current monitor ------------------------------------- ###
 
-    def read_voltage(self, raw=False):
+    def read_voltage(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
         """Read voltage monitor.
 
         Returns:
-            voltage monitor in [mV]
+            float: voltage monitor in [mV]
 
         """
         
@@ -366,12 +383,29 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        if raw:
-            return self._read_analog(self.config['VMON']['AI_CHANNEL'])
-        else:
-            return (self._read_analog(self.config['VMON']['AI_CHANNEL']) / self.config['VMON']['GAIN'] + self.config['VMON']['OFFSET']) * 1e3
+        # Sample voltage monitor
+        vmon = np.zeros(average)
+        for i in range(average):
+            vmon[i] = self._read_analog(self.config['VMON']['AI_CHANNEL'])
 
-    def read_current(self, raw=False):
+        # Convert from raw voltage to [mV]
+        if not raw:
+            vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
+
+        # Calibrate
+        if calibrate and not raw:
+            vmon -= self.cal['VOFFSET']
+
+        vmon_avg, vmon_std = np.mean(vmon), np.std(vmon)
+        if verbose:
+            print(f"\n\tVoltage monitor: {vmon_avg:.3f} +/- {vmon_std:.3f} mV\n")
+
+        if stats:
+            return vmon_avg, vmon_std
+        else:
+            return vmon_avg
+
+    def read_current(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
         """Read current monitor.
 
         Returns:
@@ -384,12 +418,29 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        if raw:
-            return self._read_analog(self.config['IMON']['AI_CHANNEL'])
+        # Sample current monitor
+        imon = np.zeros(average)
+        for i in range(average):
+            imon[i] = self._read_analog(self.config['IMON']['AI_CHANNEL'])
+
+        # Convert from raw voltage to [uA]
+        if not raw:
+            imon = imon / self.config['IMON']['GAIN'] * 1e3 - self.config['IMON']['OFFSET']
+
+        # Calibrate
+        if calibrate and not raw:
+            imon -= self.cal['IOFFSET']
+
+        imon_avg, imon_std = np.mean(imon), np.std(imon)
+        if verbose:
+            print(f"\n\tCurrent monitor: {imon_avg:.3f} +/- {imon_std:.3f} uA\n")
+
+        if stats:
+            return imon_avg, imon_std
         else:
-            return (self._read_analog(self.config['IMON']['AI_CHANNEL']) / self.config['IMON']['GAIN'] + self.config['IMON']['OFFSET']) * 1e6
+            return imon_avg
     
-    def read_ifpower(self):
+    def read_ifpower(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
         """Read IF power from power meter/detector.
 
         Returns:
@@ -402,9 +453,70 @@ class SISBias:
         if self._ai_scan_status == ScanStatus.RUNNING:
             self.ai_device.scan_stop()
 
-        return self._read_analog(self.config['PIF']['AI_CHANNEL']) - self.config['PIF']['OFFSET']
+        # Sample IF power
+        pif = np.zeros(average)
+        for i in range(average):
+            pif[i] = self._read_analog(self.config['PIF']['AI_CHANNEL'])
 
-    def read_iv_curve(self, debug=False):
+        # Convert from raw voltage to AU
+        if not raw:
+            pif -= self.config['PIF']['OFFSET']
+
+        # Calibrate
+        if calibrate and not raw:
+            pif = (pif - self.cal['IFOFFSET']) * self.cal['IFCORR']
+
+        pif_avg, pif_std = np.mean(pif), np.std(pif)
+        if verbose:
+            print(f"\n\tIF power: {pif_avg:.3f} +/- {pif_std:.3f} K\n")
+
+        if stats:
+            return pif_avg, pif_std
+        else:
+            return pif_avg
+
+    def read_all(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
+
+        # Stop current scan
+        self.update_ai_scan_status()
+        if self._ai_scan_status == ScanStatus.RUNNING:
+            self.ai_device.scan_stop()
+
+        # Sample voltage, current, IF power
+        vmon = np.zeros(average)
+        imon = np.zeros(average)
+        pif = np.zeros(average)
+        for i in range(average):
+            vmon[i] = self._read_analog(self.config['VMON']['AI_CHANNEL'])
+            imon[i] = self._read_analog(self.config['IMON']['AI_CHANNEL'])
+            pif[i] = self._read_analog(self.config['PIF']['AI_CHANNEL'])
+
+        # Convert from raw voltage to desired units
+        if not raw:
+            vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
+            imon = imon / self.config['IMON']['GAIN'] * 1e3 - self.config['IMON']['OFFSET']
+            pif -= self.config['PIF']['OFFSET']
+
+        # Calibrate
+        if calibrate and not raw:
+            imon -= self.cal['IOFFSET']
+            vmon -= self.cal['VOFFSET']
+            pif = (pif - self.cal['IFOFFSET']) * self.cal['IFCORR']
+
+        vmon_avg, vmon_std = np.mean(vmon), np.std(vmon)
+        imon_avg, imon_std = np.mean(imon), np.std(imon)
+        pif_avg, pif_std = np.mean(pif), np.std(pif)
+        if verbose:
+            print(f"\n\tVoltage monitor: {vmon_avg:6.3f} +/- {vmon_std:6.3f} mV\n")
+            print(f"\n\tCurrent monitor: {imon_avg:6.3f} +/- {imon_std:6.3f} uA\n")
+            print(f"\n\tIF power:        {pif_avg:6.3f} +/- {pif_std:6.3f} K\n")
+
+        if stats:
+            return vmon_avg, vmon_std, imon_avg, imon_std, pif_avg, pif_std
+        else:
+            return vmon_avg, imon_avg, pif_avg
+
+    def read_iv_curve_buffer(self, raw=False, calibrate=True, debug=False):
         """Read I-V curve.
 
         Returns:
@@ -414,33 +526,40 @@ class SISBias:
 
         # Analog input from voltage / current monitors
         data_in = list(self.analog_input)
-        voltage, current, ifpower = np.array(data_in[::3]), np.array(data_in[1::3]), np.array(data_in[2::3])
+        vmon, imon, pif = np.array(data_in[::3]), np.array(data_in[1::3]), np.array(data_in[2::3])
 
         if debug:
-            print("Raw voltage range: {:.2f} to {:.2f} V".format(voltage.min(), voltage.max()))
-            print("Raw current range: {:.2f} to {:.2f} V".format(current.min(), current.max()))
+            print(f"Raw voltage range: {vmon.min():.2f} to {vmon.max():.2f} V")
+            print(f"Raw current range: {imon.min():.2f} to {imon.max():.2f} V")
 
-        # Calibrate and correct offset
-        voltage = voltage / self.config['VMON']['GAIN'] - self.config['VMON']['OFFSET']
-        current = current / self.config['IMON']['GAIN'] - self.config['IMON']['OFFSET']
-        ifpower = ifpower - self.config['PIF']['OFFSET']
+        # Convert from raw voltage to desired units
+        if not raw:
+            vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
+            imon = imon / self.config['IMON']['GAIN'] * 1e3 - self.config['IMON']['OFFSET']
+            pif -= self.config['PIF']['OFFSET']
 
-        return voltage, current, ifpower
+        # Calibrate
+        if calibrate and not raw:
+            imon -= self.cal['IOFFSET']
+            vmon -= self.cal['VOFFSET']
+            pif = (pif - self.cal['IFOFFSET']) * self.cal['IFCORR']
+
+        return vmon, imon, pif
 
     def _read_analog(self, channel):
         """Read analog input channel.
 
         Args:
-            channel: channel number
+            channel (int): channel number
 
         Returns:
-            analog input
+            np.ndarray: analog input
 
         """
 
         return self.ai_device.a_in(channel, AI_MODE, AI_RANGE, AI_FLAG)
 
-    def start_iv_monitor_scan(self, npts=1000, sweep_period=5.0, verbose=True):
+    def start_iv_monitor_scan(self, npts=1000, sweep_period=5, verbose=True):
         """Scan voltage & current monitors.
 
         Args:
@@ -449,7 +568,6 @@ class SISBias:
 
         sample_period = sweep_period / npts
         sample_frequency = 1 / sample_period
-        samples_per_period = int(npts * 3)
         samples_per_channel = int(npts)
 
         # Stop current scan
@@ -477,6 +595,340 @@ class SISBias:
             print(f'\t\tSampling frequency:  {sample_frequency:.1f} Hz')
             print(f'\t\tSampling frequency:  {rate:.1f} Hz (actual)')
 
+    # Calibrate ---------------------------------------------------------- ###
+
+    def calibrate_if_power_offset(self, average=10_000):
+        """Calibrate IF power offset.
+
+        Args:
+            average (int): averaging, default is 10000
+
+        Returns:
+            float: if power offset, in units [AU]
+
+        """
+
+        # Calculate IF power offset
+        self.set_control_voltage(0)
+        _ = input("\n\tTurn warm LNA off. Press enter when ready.")
+        if_offset = self.read_ifpower(average=average, calibrate=False)
+        _ = input("\n\tTurn warm LNA back on. Press enter when ready.")
+        print(f"\n\tPrevious IF offset: {self.cal['IFOFFSET']:.4f} AU")
+        self.cal['IFOFFSET'] = if_offset
+        print(f"  \tNew IF offset:      {self.cal['IFOFFSET']:.4f} AU\n")
+
+        return if_offset
+
+    def calibrate_if_power(self, vmin=2.5, vmax=3, average=1000, npts=10, njunc=3, extra=False, debug=False):
+        """Calibrate IF power using shot noise slope.
+
+        Args:
+            vmin (float): minimum control voltage, in [V], default is 2.5
+            vmax (float): maximum control voltage, in [V], default is 3.0
+            average (int): averaging, default is 1000
+            npts (int): number of points, default is 10
+            njunc (int): number of junctions, default is 3
+            extra (bool): return extra info
+            debug (bool): debug
+
+        Returns:
+            IF calibration, in [K/AU]
+
+        """
+
+        # Measure shot noise
+        vsweep = np.linspace(vmin, vmax, npts)
+        vsis = np.zeros(npts)
+        pif = np.zeros(npts)
+        for i, _v in np.ndenumerate(vsweep):
+            progress_bar(i[0]+1, npts, prefix="\tMeasure shot noise: ")
+            self.set_control_voltage(_v)
+            time.sleep(0.1)
+            vsis[i] = self.read_voltage(average=average)
+            pif[i] = self.read_ifpower(average=average, calibrate=False)
+        pif -= self.cal['IFOFFSET']
+
+        # Calculate calibration factor
+        pshot = np.polyfit(vsis, pif, 1)
+        au2k = 5.8 / pshot[0] / njunc
+        print(f"\n\tPrevious correction: {self.cal['IFCORR']:6.1f} K/AU")
+        self.cal['IFCORR'] = au2k
+        print(f"\n\tNew correction:      {self.cal['IFCORR']:6.1f} K/AU")
+        pif *= au2k
+
+        if debug:
+            fig, ax1 = plt.subplots(figsize=(6, 5))
+            ax1.plot(vsis, pif, 'ko-')
+            ax1.plot(vsis, np.polyval(pshot, vsis) * au2k, 'r--')
+            ax1.set_xlabel("Bias voltage (mV)")
+            ax1.set_ylabel("IF power (AU)")
+            plt.show()
+
+        if extra:
+            return au2k, vsis, pif
+        else:
+            return au2k
+
+    # def calibrate_iv_offset(self, average=1000):
+
+    #     # Measure voltage offset
+    #     _ = input("\n\tTurn off B-field coil. Press enter when ready.")
+    #     vmin = -0.01
+    #     vmax = 0.01
+    #     npts = 10
+    #     vsweep = np.linspace(vmin, vmax, npts)
+    #     vsis = np.zeros(npts)
+    #     isis = np.zeros(npts)
+    #     for i, _v in np.ndenumerate(vsweep):
+    #         progress_bar(i[0] + 1, npts, prefix="\tMeasure voltage offset: ")
+    #         self.set_control_voltage(_v)
+    #         time.sleep(0.1)
+    #         vsis[i], _, isis[i], _, _, _ = self.read_all(average=average)
+    #     vtmp = np.linspace(vsis.min(), vsis.max(), 1000)
+    #     itmp = np.interp(vtmp, vsis, isis)
+    #     idx = np.abs(itmp).argmin()
+    #     voffset = vtmp[idx]
+
+    #     plt.plot(vsis, isis, 'ko')
+    #     plt.plot(vtmp, itmp, 'b')
+    #     plt.plot([voffset], [0], 'r*')
+    #     plt.show()
+
+    # Measure I-V/IF data ------------------------------------------------ ###
+
+    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, msg=None):
+        """Measure I-V curve and IF power as a function of bias voltage.
+
+        Args:
+            npts (int): number of points, default is 201
+            average (int): averaging, default is 64
+            vmin (float): minimum control voltage, in [V], default is -1
+            vmax (float): maximum control voltage, in [V], default is -1
+            vlimit (float): hard limit on control voltage, in [V], default is 1
+            sleep_time (float): sleep time between voltage points, in [s], default is 0.1
+            msg (str): progress message
+
+        Returns:
+            tuple: voltage, voltage error, current, current error, IF power, IF power error
+
+        """
+
+        if msg is None:
+            msg = "\tProgress: "
+
+        vctrl_sweep = np.linspace(vmin, vmax, npts)
+        try:
+            results = np.zeros((6, npts))
+            for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                self.set_control_voltage(_vctrl, vlimit=vlimit)
+                time.sleep(sleep_time)
+                results[:, i] = np.array(self.read_all(average=average)).reshape(6, 1)
+                progress_bar(i[0] + 1, len(vctrl_sweep), prefix=msg)
+        except KeyboardInterrupt:
+            print("")
+            plt.close('all')
+            return
+
+        # Sort by voltage
+        idx = results[0, :].argsort()
+        
+        return results[:, idx]
+
+    def monitor(self, npts=1000, period=0.2, vmin=-1, vmax=1, vlimit=5):
+        """Plot real-time monitor.
+
+        Args:
+            npts (int): number of points, default is 1000
+            period (float): period, in [s], default is 0.2
+            vmin (float): minimum control voltage, in [V], default is -1
+            vmax (float): maximum control voltage, in [V], default is 1
+            vlimit (float): hard limit on control voltage, in [V], default is 5
+
+        """
+
+        # Start I-V bias sweeps
+        self.sweep_control_voltage(vmin, vmax, npts=npts, sweep_period=period, vlimit=vlimit)
+        self.start_iv_monitor_scan(npts=npts, sweep_period=period)
+        time.sleep(period * 2)
+        print("")
+
+        # Read I-V curve
+        voltage, current, ifpower = self.read_iv_curve_buffer()
+
+        # Create figure
+        plt.ion()
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        ax1.set_xlabel("Voltage (mV)")
+        ax2.set_xlabel("Voltage (mV)")
+        ax1.set_ylabel("Current (uA)")
+        ax2.set_ylabel("IF power (K)")
+        ax1.set_xlim([voltage.min() * 1e3, voltage.max() * 1e3])
+        ax2.set_xlim([voltage.min() * 1e3, voltage.max() * 1e3])
+        ax1.set_ylim([current.min() * 1e6, current.max() * 1e6])
+        ax2.set_ylim([0, ifpower.max() * 2])
+        line1, = ax1.plot([0], [0], 'k.', ms=1)
+        line2, = ax2.plot([0], [0], 'k.', ms=1)
+        fig.canvas.draw()
+        plt.show()
+
+        while True:
+            try:
+                # Restart scans
+                self.sweep_control_voltage(vmin, vmax, npts=npts, sweep_period=period, vlimit=vlimit, verbose=False)
+                self.start_iv_monitor_scan(npts=npts, sweep_period=period, verbose=False)
+                time.sleep(period)
+
+                # Read I-V curve
+                voltage, current, ifpower = self.read_iv_curve_buffer()
+
+                # Draw I-V curve
+                line1.set_data(voltage * 1e3, current * 1e6)
+                line2.set_data(voltage * 1e3, ifpower)
+                fig.canvas.draw()
+                plt.pause(0.0001)
+                fig.canvas.flush_events()
+
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                break
+
+    def noise_statistics(self, vcontrol=0, npts=50000, vlimit=5):
+        """Set control voltage to a constant value and then measure read-out statistics.
+
+        Args:
+            vcontrol (float): control voltage value, in [V], default is 0
+            npts (int): number of points, default is 50000
+            vlimit (float): hard limit on control voltage, in [V], default in 5
+
+        """
+
+        # Set constant bias voltage
+        self.set_control_voltage(vcontrol, vlimit=vlimit)
+        time.sleep(1.5)
+        vmon = self.read_voltage(average=100)
+        imon = self.read_current(average=100)
+        print(f"\tControl voltage: {vcontrol:.1f} V")
+        print(f"\tVoltage monitor: {vmon:.1f} mV")
+        print(f"\tCurrent monitor: {imon:.1f} uA\n")
+
+        # Sample voltage/current monitors
+        try:
+            voltage = np.zeros(npts)
+            current = np.zeros(npts)
+            ifpower = np.zeros(npts)
+            start = time.time()
+            for i in range(npts):
+                voltage[i] = self.read_voltage(average=1)
+                current[i] = self.read_current(average=1)
+                ifpower[i] = self.read_ifpower(average=1)
+                if i % 1000 == 0 or i + 1 == npts:
+                    progress_bar(i + 1, npts, prefix="\tProgress: ")
+            total_time = time.time() - start
+            t = np.linspace(0, total_time, npts)
+            ifpower *= 10
+        except KeyboardInterrupt:
+            print("")
+            plt.close('all')
+            return
+
+        # Print statistics
+        print("\n\tVoltage monitor:")
+        print("\t\tMean:               {:7.3f} mV".format(np.mean(voltage)))
+        print("\t\tStandard deviation: {:7.3f} uV".format(np.std(voltage)))
+        print("\t\t                    {:7.1f} % ".format(np.std(voltage)/np.mean(voltage)*100))
+        print("\tCurrent monitor:")
+        print("\t\tMean:               {:7.2f} uA".format(np.mean(current)))
+        print("\t\tStandard deviation: {:7.2f} uA".format(np.std(current)))
+        print("\t\t                    {:7.1f} % ".format(np.std(current)/np.mean(current)*100))
+        print("\tIF power:")
+        print("\t\tMean:               {:7.3f} K".format(np.mean(ifpower)))
+        print("\t\tStandard deviation: {:7.3f} K".format(np.std(ifpower)))
+        print("\t\t                    {:7.1f} % ".format(np.std(ifpower)/np.mean(ifpower)*100))
+        print("\n\tSampling frequency: {:.1f} kHz".format(npts*2/total_time/1e3))
+        print("\n\tTotal time:         {:.1f} s\n".format(total_time))
+
+        # Plot
+        fig, ((ax1, ax3, ax5), (ax2, ax4, ax6)) = plt.subplots(2, 3, figsize=(15, 8))
+        ax1.plot(t, voltage, 'k', lw=0.5, alpha=0.2)
+        ax1.plot(t, gauss_conv(voltage, 3), 'r')
+        ax1.axhspan(-np.std(voltage)+np.mean(voltage), np.std(voltage)+np.mean(voltage), color='r', alpha=0.2)
+        ax3.plot(t, current, 'k', lw=0.5, alpha=0.2)
+        ax3.plot(t, gauss_conv(current, 3), 'r')
+        ax3.axhspan(-np.std(current)+np.mean(current), np.std(current)+np.mean(current), color='r', alpha=0.2)
+        ax5.plot(t, ifpower, 'k', lw=0.5, alpha=0.2)
+        ax5.plot(t, gauss_conv(ifpower, 3), 'r')
+        ax5.axhspan(-np.std(ifpower)+np.mean(ifpower), np.std(ifpower)+np.mean(ifpower), color='r', alpha=0.2)
+
+        # Zero
+        voltage -= np.mean(voltage)
+        current -= np.mean(current)
+        ifpower -= np.mean(ifpower)
+
+        # FFT
+        voltage_fft = np.fft.fftshift(np.fft.fft(voltage))
+        current_fft = np.fft.fftshift(np.fft.fft(current))
+        ifpower_fft = np.fft.fftshift(np.fft.fft(ifpower))
+        f = np.fft.fftshift(np.fft.fftfreq(len(voltage), d=t[1]-t[0]))
+
+        # Peak values
+        idx = np.abs(voltage_fft).argmax()
+        print(f"\tPeak voltage:  {np.abs(voltage_fft[idx]):7.1f} at {abs(f[idx]):4.1f} Hz")
+        idx = np.abs(current_fft).argmax()
+        print(f"\tPeak current:  {np.abs(current_fft[idx]):7.1f} at {abs(f[idx]):4.1f} Hz")
+        idx = np.abs(ifpower_fft).argmax()
+        print(f"\tPeak IF power: {np.abs(ifpower_fft[idx]):7.1f} at {abs(f[idx]):4.1f} Hz")
+        print("")
+
+        # Plot
+        ax2.plot(f, np.abs(voltage_fft), 'k', lw=0.5, alpha=0.2)
+        ax2.plot(f, gauss_conv(np.abs(voltage_fft), 3), 'r', lw=2)
+        ax2.axvspan(55, 65, color='r', alpha=0.2)
+        ax4.plot(f, np.abs(current_fft), 'k', lw=0.5, alpha=0.2)
+        ax4.plot(f, gauss_conv(np.abs(current_fft), 3), 'r', lw=2)
+        ax4.axvspan(55, 65, color='r', alpha=0.2)
+        ax6.plot(f, np.abs(ifpower_fft), 'k', lw=0.5, alpha=0.5)
+        ax6.plot(f, gauss_conv(np.abs(ifpower_fft), 1), 'r', lw=2)
+        ax6.axvspan(1.1, 1.3, color='r', alpha=0.2)
+        ax1.set_xlabel("Time (s)")
+        ax3.set_xlabel("Time (s)")
+        ax5.set_xlabel("Time (s)")
+        ax1.set_ylabel("Voltage (mV)")
+        ax3.set_ylabel("Current (uA)")
+        ax5.set_ylabel("IF Power (K)")
+        ax2.set_xlabel("Frequency (Hz)")
+        ax4.set_xlabel("Frequency (Hz)")
+        ax6.set_xlabel("Frequency (Hz)")
+        ax2.set_ylabel("Voltage")
+        ax4.set_ylabel("Current")
+        ax6.set_ylabel("IF Power")
+        ax1.set_xlim([0, t.max()])
+        ax3.set_xlim([0, t.max()])
+        ax5.set_xlim([0, t.max()])
+        ax2.set_xlim([0, 500])
+        ax4.set_xlim([0, 500])
+        ax6.set_xlim([-1, 5])
+        ax2.set_ylim(ymin=0)
+        ax4.set_ylim(ymin=0)
+        ax6.set_ylim(ymin=0)
+        plt.show()
+
+    def plot(self):
+        """Plot I-V curve."""
+
+        voltage, current, power = self.read_iv_curve_buffer()
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        ax1.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
+        ax1.set_xlabel("Voltage (mV)")
+        ax1.set_ylabel("Current (uA)")
+
+        ax2.plot(voltage*1e3, power, 'ko', alpha=0.2, ms=1)
+        ax2.set_xlabel("Voltage (mV)")
+        ax2.set_ylabel("Power (K)")
+
+        plt.show()
+
     # Digital input / output --------------------------------------------- ###
 
     def hot_load(self):
@@ -488,24 +940,6 @@ class SISBias:
         """Move ambient load to insert cold load."""
 
         self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 1)
-
-    # Plot --------------------------------------------------------------- ###
-
-    def plot(self):
-        """Plot I-V curve."""
-
-        voltage, current, power = self.read_iv_curve()
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,6))
-        ax1.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
-        ax1.set_xlabel("Voltage (mV)")
-        ax1.set_ylabel("Current (uA)")
-
-        ax2.plot(voltage*1e3, power, 'ko', alpha=0.2, ms=1)
-        ax2.set_xlabel("Voltage (mV)")
-        ax2.set_ylabel("Power (au)")
-
-        plt.show()
 
     # Scan status -------------------------------------------------------- ###
     
@@ -531,24 +965,63 @@ class SISBias:
 
         self._ai_scan_status, self._ai_transfer_status = self.ai_device.get_scan_status()
 
+    # Save parameters ---------------------------------------------------- ###
+
+    def save_cal(self, cal_filename=None):
+        """Save calibration parameters.
+
+        Args:
+            cal_filename (str): calibration file name
+
+        """
+
+        if cal_filename is None:
+            cal_filename = self.cal_file
+
+        # Save parameters to file (for persistence)
+        with open(cal_filename, 'w') as fout:
+            json.dump(self.cal, fout, indent=4)
+        print(f"\nCalibration parameters saved to: {cal_filename}")
+
+    def save_config(self, config_filename=None):
+        """Save configuration parameters to file.
+
+        Args:
+            config_filename (str): configuration file name
+
+        """
+
+        if config_filename is None:
+            config_filename = self.config_file
+
+        # Save parameters to file (for persistence)
+        with open(config_filename, 'w') as fout:
+            json.dump(self.config, fout, indent=4)
+        print(f"\nConfiguration parameters saved to: {config_filename}")
+
     # Stop --------------------------------------------------------------- ###
     
     def close(self):
         """Stop DAQ device and close all connections."""
-        
+
+        print("\nClosing connection to DAQ device ... ", end='')
+
         try:
-            print("\nClosing connection to DAQ device ... ", end='')
             if self.daq_device:
-                self.update_ao_scan_status()
+
                 # Stop the scan
+                self.update_ao_scan_status()
                 if self._ao_scan_status == ScanStatus.RUNNING:
                     self.ao_device.scan_stop()
                 self.set_control_voltage(0)
+
                 # Disconnect from the DAQ device
                 if self.daq_device.is_connected():
                     self.daq_device.disconnect()
+
                 # Release the DAQ device resource
                 self.daq_device.release()
+
             print("done\n")
         except uldaq.ul_exception.ULException:
             print("\nDevice already disconnected\n")
