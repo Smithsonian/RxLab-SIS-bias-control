@@ -425,7 +425,7 @@ class SISBias:
 
         # Convert from raw voltage to [uA]
         if not raw:
-            imon = imon / self.config['IMON']['GAIN'] * 1e3 - self.config['IMON']['OFFSET']
+            imon = imon / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
 
         # Calibrate
         if calibrate and not raw:
@@ -494,7 +494,7 @@ class SISBias:
         # Convert from raw voltage to desired units
         if not raw:
             vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
-            imon = imon / self.config['IMON']['GAIN'] * 1e3 - self.config['IMON']['OFFSET']
+            imon = imon / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
             pif -= self.config['PIF']['OFFSET']
 
         # Calibrate
@@ -535,7 +535,7 @@ class SISBias:
         # Convert from raw voltage to desired units
         if not raw:
             vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
-            imon = imon / self.config['IMON']['GAIN'] * 1e3 - self.config['IMON']['OFFSET']
+            imon = imon / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
             pif -= self.config['PIF']['OFFSET']
 
         # Calibrate
@@ -763,9 +763,9 @@ class SISBias:
         ax2.set_xlabel("Voltage (mV)")
         ax1.set_ylabel("Current (uA)")
         ax2.set_ylabel("IF power (K)")
-        ax1.set_xlim([voltage.min() * 1e3, voltage.max() * 1e3])
-        ax2.set_xlim([voltage.min() * 1e3, voltage.max() * 1e3])
-        ax1.set_ylim([current.min() * 1e6, current.max() * 1e6])
+        ax1.set_xlim([voltage.min(), voltage.max()])
+        ax2.set_xlim([voltage.min(), voltage.max()])
+        ax1.set_ylim([current.min(), current.max()])
         ax2.set_ylim([0, ifpower.max() * 2])
         line1, = ax1.plot([0], [0], 'k.', ms=1)
         line2, = ax2.plot([0], [0], 'k.', ms=1)
@@ -783,8 +783,8 @@ class SISBias:
                 voltage, current, ifpower = self.read_iv_curve_buffer()
 
                 # Draw I-V curve
-                line1.set_data(voltage * 1e3, current * 1e6)
-                line2.set_data(voltage * 1e3, ifpower)
+                line1.set_data(voltage, current)
+                line2.set_data(voltage, ifpower)
                 fig.canvas.draw()
                 plt.pause(0.0001)
                 fig.canvas.flush_events()
