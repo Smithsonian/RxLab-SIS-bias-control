@@ -497,9 +497,9 @@ try:
             ax2.set_ylabel("IF Power (au)")
             line1, = ax1.plot([0], [0], 'ko-', ms=3)
             line2, = ax2.plot([0], [0], 'ko-', ms=3)
-            ax1.set_xlim([voltage.min() * 1e3, voltage.max() * 1e3])
-            ax2.set_xlim([voltage.min() * 1e3, voltage.max() * 1e3])
-            ax1.set_ylim([0, current.max() * 1e6])
+            ax1.set_xlim([voltage.min(), voltage.max()])
+            ax2.set_xlim([voltage.min(), voltage.max()])
+            ax1.set_ylim([current.min(), current.max()])
             ax2.set_ylim([0, ifpower.max() * 2])
             fig.canvas.draw()
             plt.show()
@@ -926,7 +926,7 @@ try:
         # Misc functions --------------------------------------------------- #
 
         # HELP: Print help for most useful commands
-        # TODO: add new commands
+        # TODO: add new commands, vbmin, vbmax
         elif command[0] == "HELP" or command[0] == "H":
 
             print("\n\tMost useful commands/parameters:\n")
