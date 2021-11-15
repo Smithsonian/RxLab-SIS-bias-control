@@ -212,7 +212,8 @@ class SISBias:
             vbias1 = self.read_voltage(average=100)
             if verbose:
                 print("\tBias voltage:  {:6.2f} mV".format(vbias1))
-
+        print("")
+        
         return vbias1, vctrl
 
     def sweep_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5, vlimit=5, verbose=True):
@@ -390,7 +391,7 @@ class SISBias:
 
         # Convert from raw voltage to [mV]
         if not raw:
-            vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
+            vmon = vmon / self.config['VMON']['GAIN'] * 1e3  # mV
 
         # Calibrate
         if calibrate and not raw:
@@ -425,7 +426,7 @@ class SISBias:
 
         # Convert from raw voltage to [uA]
         if not raw:
-            imon = imon / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
+            imon = imon / self.config['IMON']['GAIN'] * 1e6  # uA
 
         # Calibrate
         if calibrate and not raw:
@@ -458,10 +459,6 @@ class SISBias:
         for i in range(average):
             pif[i] = self._read_analog(self.config['PIF']['AI_CHANNEL'])
 
-        # Convert from raw voltage to AU
-        if not raw:
-            pif -= self.config['PIF']['OFFSET']
-
         # Calibrate
         if calibrate and not raw:
             pif = (pif - self.cal['IFOFFSET']) * self.cal['IFCORR']
@@ -493,14 +490,13 @@ class SISBias:
 
         # Convert from raw voltage to desired units
         if not raw:
-            vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
-            imon = imon / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
-            pif -= self.config['PIF']['OFFSET']
+            vmon = vmon / self.config['VMON']['GAIN'] * 1e3  # mV
+            imon = imon / self.config['IMON']['GAIN'] * 1e6  # uA
 
         # Calibrate
         if calibrate and not raw:
-            imon -= self.cal['IOFFSET']
             vmon -= self.cal['VOFFSET']
+            imon -= self.cal['IOFFSET']
             pif = (pif - self.cal['IFOFFSET']) * self.cal['IFCORR']
 
         vmon_avg, vmon_std = np.mean(vmon), np.std(vmon)
@@ -534,14 +530,13 @@ class SISBias:
 
         # Convert from raw voltage to desired units
         if not raw:
-            vmon = vmon / self.config['VMON']['GAIN'] * 1e3 - self.config['VMON']['OFFSET']
-            imon = imon / self.config['IMON']['GAIN'] * 1e6 - self.config['IMON']['OFFSET']
-            pif -= self.config['PIF']['OFFSET']
+            vmon = vmon / self.config['VMON']['GAIN'] * 1e3  # mV
+            imon = imon / self.config['IMON']['GAIN'] * 1e6  # uA
 
         # Calibrate
         if calibrate and not raw:
-            imon -= self.cal['IOFFSET']
             vmon -= self.cal['VOFFSET']
+            imon -= self.cal['IOFFSET']
             pif = (pif - self.cal['IFOFFSET']) * self.cal['IFCORR']
 
         return vmon, imon, pif
@@ -597,7 +592,7 @@ class SISBias:
 
     # Calibrate ---------------------------------------------------------- ###
 
-    def calibrate_if_power_offset(self, average=10_000):
+    def calibrate_if_power_offset(self, vcontrol=0.2, average=10_000, verbose=True):
         """Calibrate IF power offset.
 
         Args:
@@ -609,17 +604,26 @@ class SISBias:
         """
 
         # Calculate IF power offset
-        self.set_control_voltage(0)
         _ = input("\n\tTurn warm LNA off. Press enter when ready.")
-        if_offset = self.read_ifpower(average=average, calibrate=False)
+        self.set_control_voltage(-vcontrol)
+        time.sleep(0.2)
+        if_offset1 = self.read_ifpower(average=average, calibrate=False)
+        self.set_control_voltage(vcontrol)
+        time.sleep(0.2)
+        if_offset2 = self.read_ifpower(average=average, calibrate=False)
         _ = input("\n\tTurn warm LNA back on. Press enter when ready.")
-        print(f"\n\tPrevious IF offset: {self.cal['IFOFFSET']:.4f} AU")
-        self.cal['IFOFFSET'] = if_offset
-        print(f"  \tNew IF offset:      {self.cal['IFOFFSET']:.4f} AU\n")
+        new_ifoffset = (if_offset1 + if_offset2) / 2
+        old_ifoffset = self.cal['IFOFFSET']
+        self.cal['IFOFFSET'] = new_ifoffset
+        if verbose:
+            change = abs(old_ifoffset - new_ifoffset) / abs(new_ifoffset) * 100
+            print(f"\n\tOld IF offset:  {old_ifoffset:7.4f} AU")
+            print(f"  \tNew IF offset:  {new_ifoffset:7.4f} AU")
+            print(f"  \t-> change:      {change:4.1f} %\n")
 
-        return if_offset
+        return self.cal['IFOFFSET']
 
-    def calibrate_if_power(self, vmin=2.5, vmax=3, average=1000, npts=10, njunc=3, extra=False, debug=False):
+    def calibrate_if_power(self, vmin=2.5, vmax=3, average=2000, npts=10, sleep_time=0.2, njunc=3, extra=False, verbose=True, debug=False):
         """Calibrate IF power using shot noise slope.
 
         Args:
@@ -643,7 +647,7 @@ class SISBias:
         for i, _v in np.ndenumerate(vsweep):
             progress_bar(i[0]+1, npts, prefix="\tMeasure shot noise: ")
             self.set_control_voltage(_v)
-            time.sleep(0.1)
+            time.sleep(sleep_time)
             vsis[i] = self.read_voltage(average=average)
             pif[i] = self.read_ifpower(average=average, calibrate=False)
         pif -= self.cal['IFOFFSET']
@@ -651,10 +655,14 @@ class SISBias:
         # Calculate calibration factor
         pshot = np.polyfit(vsis, pif, 1)
         au2k = 5.8 / pshot[0] / njunc
-        print(f"\n\tPrevious correction: {self.cal['IFCORR']:6.1f} K/AU")
+        old_correction = self.cal['IFCORR']
         self.cal['IFCORR'] = au2k
-        print(f"\n\tNew correction:      {self.cal['IFCORR']:6.1f} K/AU")
         pif *= au2k
+        change = abs(old_correction - au2k) / abs(au2k) * 100
+        if verbose:
+            print(f"\n\tOld correction: {old_correction:8.1f} K/AU")
+            print(f"  \tNew correction: {self.cal['IFCORR']:8.1f} K/AU")
+            print(f"  \t-> change:      {change:5.1f} %\n")
 
         if debug:
             fig, ax1 = plt.subplots(figsize=(6, 5))
@@ -665,38 +673,94 @@ class SISBias:
             plt.show()
 
         if extra:
-            return au2k, vsis, pif
+            return self.cal['IFCORR'], vsis, pif
         else:
-            return au2k
+            return self.cal['IFCORR']
 
-    # def calibrate_iv_offset(self, average=1000):
+    def calibrate_voffset(self, npts=10, average=1000, vmin=-0.05, vmax=0.05, verbose=True, debug=False):
 
-    #     # Measure voltage offset
-    #     _ = input("\n\tTurn off B-field coil. Press enter when ready.")
-    #     vmin = -0.01
-    #     vmax = 0.01
-    #     npts = 10
-    #     vsweep = np.linspace(vmin, vmax, npts)
-    #     vsis = np.zeros(npts)
-    #     isis = np.zeros(npts)
-    #     for i, _v in np.ndenumerate(vsweep):
-    #         progress_bar(i[0] + 1, npts, prefix="\tMeasure voltage offset: ")
-    #         self.set_control_voltage(_v)
-    #         time.sleep(0.1)
-    #         vsis[i], isis[i], _ = self.read_all(average=average)
-    #     vtmp = np.linspace(vsis.min(), vsis.max(), 1000)
-    #     itmp = np.interp(vtmp, vsis, isis)
-    #     idx = np.abs(itmp).argmin()
-    #     voffset = vtmp[idx]
+        # Measure voltage offset
+        _ = input("\n\tTurn off B-field coil. Press enter when ready.")
+        print("")
+        vsweep = np.linspace(vmin, vmax, npts)
+        vsis = np.zeros(npts)
+        isis = np.zeros(npts)
+        for i, _v in np.ndenumerate(vsweep):
+            progress_bar(i[0] + 1, npts, prefix="\tMeasuring voltage offset: ")
+            self.set_control_voltage(_v)
+            time.sleep(0.1)
+            vsis[i], isis[i], _ = self.read_all(average=average)
+        vtmp = np.linspace(vsis.min(), vsis.max(), 1000)
+        itmp = np.interp(vtmp, vsis, isis)
+        idx = np.abs(itmp).argmin()
+        error = vtmp[idx]
+        old_ioffset = self.cal['VOFFSET']
+        self.cal['VOFFSET'] += error / 2
 
-    #     plt.plot(vsis, isis, 'ko')
-    #     plt.plot(vtmp, itmp, 'b')
-    #     plt.plot([voffset], [0], 'r*')
-    #     plt.show()
+        if verbose:
+            print(f"\n\tOld voltage offset: {old_ioffset:8.4f} mV")
+            print(f"  \tNew voltage offset: {self.cal['VOFFSET']:8.4f} mV")
+            print(f"  \t-> change:          {self.cal['VOFFSET']-old_ioffset:8.4f} mV\n")
+
+        if debug:
+            plt.plot(vsis, isis, 'ko', label='Data')
+            plt.plot(vtmp, itmp, 'b', label='Interp.')
+            plt.axvline(0, c='k', ls='-')
+            plt.axhline(0, c='k', ls='-')
+            plt.plot([error], [0], 'r*', label='V offset')
+            plt.xlabel("Bias voltage (mV)")
+            plt.ylabel("Current (uA)")
+            plt.legend()
+            plt.show()
+
+        return self.cal['VOFFSET']
+
+    def calibrate_ioffset(self, npts=10, average=1000, vmin=1, vmax=1.5, verbose=True, debug=False):
+
+        # Measure current offset
+        vsweep = np.linspace(vmin, vmax, npts)
+        vsis1 = np.zeros(npts)
+        isis1 = np.zeros(npts)
+        vsis2 = np.zeros(npts)
+        isis2 = np.zeros(npts)
+        for i, _v in np.ndenumerate(vsweep):
+            progress_bar(i[0] + 1, npts, prefix="\tMeasuring current offset (pos): ")
+            self.set_control_voltage(_v)
+            time.sleep(0.1)
+            vsis1[i], isis1[i], _ = self.read_all(average=average)
+        for i, _v in np.ndenumerate(vsweep):
+            progress_bar(i[0] + 1, npts, prefix="\tMeasuring current offset (neg): ")
+            self.set_control_voltage(-_v)
+            time.sleep(0.1)
+            vsis2[i], isis2[i], _ = self.read_all(average=average)
+        vsis2 = -vsis2
+        isis2 = -isis2
+
+        # Interpolate to common bias voltage
+        vtmp = np.linspace(max(vsis1.min(), vsis2.min()), min(vsis1.max(), vsis2.max()), 100)
+        error = np.mean(np.interp(vtmp, vsis1, isis1) - np.interp(vtmp, vsis2, isis2))
+        old_ioffset = self.cal['IOFFSET']
+        self.cal['IOFFSET'] += error / 2
+
+        if verbose:
+            print(f"\n\tOld current offset: {old_ioffset:8.4f} uA")
+            print(f"  \tNew current offset: {self.cal['IOFFSET']:8.4f} uA")
+            print(f"  \t-> change:          {self.cal['IOFFSET']-old_ioffset:8.4f} uA\n")
+
+        if debug:
+            plt.figure(figsize=(5,5))
+            plt.plot(vsis1, isis1, 'ko--', label="Positive")
+            plt.plot(vsis2, isis2, 'ro--', label="Negative (reflected in x/y)")
+            plt.xlabel("Bias voltage (mV)")
+            plt.ylabel("Current (uA)")
+            plt.legend(title="Sweep")
+            plt.show()
+
+        return self.cal['IOFFSET']
 
     # Measure I-V/IF data ------------------------------------------------ ###
 
-    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None):
+    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None, verbose=True):
         """Measure I-V curve and IF power as a function of bias voltage.
 
         Args:
@@ -717,14 +781,20 @@ class SISBias:
         if msg is None:
             msg = "\tProgress: "
 
+        if stats:
+            size = 6 
+        else:
+            size = 3
+
         vctrl_sweep = np.linspace(vmin, vmax, npts)
         try:
-            results = np.zeros((6, npts))
+            results = np.zeros((size, npts))
             for i, _vctrl in np.ndenumerate(vctrl_sweep):
                 self.set_control_voltage(_vctrl, vlimit=vlimit)
                 time.sleep(sleep_time)
-                results[:, i] = np.array(self.read_all(average=average, stats=stats)).reshape(6, 1)
-                progress_bar(i[0] + 1, len(vctrl_sweep), prefix=msg)
+                results[:, i] = np.array(self.read_all(average=average, stats=stats)).reshape(size, 1)
+                if verbose:
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix=msg)
         except KeyboardInterrupt:
             print("")
             plt.close('all')
