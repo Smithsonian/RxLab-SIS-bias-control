@@ -267,40 +267,47 @@ try:
             if len(command) > 1:
                 vbmin = int(command[1])
             else:
-                vbmin = 12.5
+                if param["NJUNC"] == 1:
+                    vbmin = 5
+                else:
+                    vbmin = 12
 
             # arg 2: max bias voltage
             if len(command) > 2:
                 vbmax = int(command[2])
             else:
-                vbmax = 15.0
+                if param["NJUNC"] == 1:
+                    vbmax = 7
+                else:
+                    vbmax = 15
 
             # arg 3: averaging
             if len(command) > 3:
                 average = int(command[3])
             else:
-                average = 1000
+                average = 10_000
 
             # Calculate IF power offset
-            if_offset = bias.calibrate_if_power_offset(average=average)
+            param["IFOFFSET"] = bias.calibrate_if_power_offset(average=average)
 
             # Calculate shot noise slope
             vmin = vbmin / 1000 * bias.config['VMON']['GAIN'] 
             vmax = vbmax / 1000 * bias.config['VMON']['GAIN'] 
-            _, _, _ = bias.calibrate_if_power(vmin=vmin, vmax=vmax, average=average, njunc=param["NJUNC"], extra=True)
+            param["IFCORR"] = bias.calibrate_if_power(vmin=vmin, vmax=vmax, average=average, njunc=param["NJUNC"], extra=False, debug=True)
 
-        # # CALIV: Calibrate I-V data
-        # elif command[0] == "CALIV":
+        # CALIV: Calibrate I-V data
+        elif command[0] == "CALIV":
 
-        #     # Print help
-        #     if len(command) == 2 and command[1].upper() == "H":
-        #         print("\n\tCalibrate I-V offset\n")
-        #         print("\tUseage: CALIV")
-        #         continue
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tCalibrate I-V offset\n")
+                print("\tUseage: CALIV")
+                continue
 
-        #     print("\n\tCALIBRATE I-V OFFSET:")
+            print("\n\tCALIBRATE I-V OFFSET:")
 
-        #     bias.calibrate_iv()
+            param["VOFFSET"] = bias.calibrate_voffset(debug=True)
+            param["IOFFSET"] = bias.calibrate_ioffset(debug=True)
 
         # Read out single values (no sweep) -------------------------------- #
 
@@ -506,7 +513,10 @@ try:
 
             while True:
                 try:
-                    v_results, _, i_results, _, p_results, _ = bias.measure_ivif(average=64, vmin=param['VMIN'], vmax=param['VMAX'], npts=20, vlimit=param['VLIMIT'])
+                    results = bias.measure_ivif(average=64, vmin=param['VMIN'], vmax=param['VMAX'], npts=20, vlimit=param['VLIMIT'], verbose=False)
+                    if results is None:
+                        break
+                    v_results, _, i_results, _, p_results, _ = results
 
                     line1.set_data(v_results, i_results)
                     line2.set_data(v_results, p_results)
@@ -614,14 +624,15 @@ try:
                     v_intercept = -pnormal[1] / pnormal[0]
                     print(f"\n\tIntercept:\t\t{v_intercept:.3f} mV")
                     rnormal = 1000 / pnormal[0]
-                    print(f"\n\tNormal resistance:\t{rnormal:.1f} ohms")
+                    print(f"  \tNormal resistance:\t{rnormal:.1f} ohms")
                     pifnoise = np.polyfit(voltage[mask], ifpower[mask], 1)
                     if_noise = np.polyval(pifnoise, v_intercept)
                     gamma = (50 - rnormal) / (50 + rnormal)
                     gmismatch = 1 - np.abs(gamma) ** 2
                     if_noise_corr = (if_noise - 1.3) * gmismatch
-                    print(f"\n\tIF noise:\t\t{if_noise:.1f} K")
-                    print(f"\t         \t\t{if_noise_corr:.1f} K (after correction)\n")
+                    print(f"  \tIF noise:\t\t{if_noise:.1f} K")
+                    print(f"  \t         \t\t{if_noise_corr:.1f} K (after correction)")
+                    print(f"  \tMean IF power:\t\t{np.mean(ifpower):.1f} K\n")
                 except:
                     pnormal = None
                     pifnoise = None
@@ -826,7 +837,7 @@ try:
                     if_filter.set_frequency(_if_freq)
                     time.sleep(0.1)
                     if_power_avg, if_power_std[i] = bias.read_ifpower(average=average, stats=True)
-                    if_power[i] = if_power_avg - param["IFOFFSET"]
+                    if_power[i] = if_power_avg #- param["IFOFFSET"]
                     progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress: ")
             except KeyboardInterrupt:
                 print("")
@@ -1007,14 +1018,20 @@ except KeyboardInterrupt:
 except EOFError:
     print("\nClosing program.")
 
+except RuntimeError:
+    bias = None
+
 finally:
     
-    # Save parameters to file (for persistence)
-    with open(param_filename, 'w') as fout:
-        json.dump(param, fout, indent=4)
-    print(f"\nParameters saved to: {param_filename}")
-    bias.save_cal()
-    bias.save_config()
+    if bias is not None:
+
+        # Save parameters to file (for persistence)
+        with open(param_filename, 'w') as fout:
+            json.dump(param, fout, indent=4)
+        print(f"\nMeasurement parameters saved to: {param_filename}")
+        bias.save_cal()
+        bias.save_config()
+        print("")
 
     try:
         bias.set_control_voltage(0, verbose=True)
