@@ -22,13 +22,13 @@ config = dict(
     VMON = dict(
         AI_CHANNEL = 0,
         GAIN = 200.3517944, 
-        OFFSET = 1.17986e-5,
+        OFFSET = 0,
         ),
     # Current monitor
     IMON = dict(
         AI_CHANNEL = 1,
         GAIN = 6012.754964,
-        OFFSET = -5e-6,
+        OFFSET = 0,
         ),
     # IF power
     PIF = dict(
