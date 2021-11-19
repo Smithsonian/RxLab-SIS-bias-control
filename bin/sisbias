@@ -295,13 +295,29 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tCalibrate I-V offset\n")
-                print("\tUseage: CALIV")
+                print("\tUseage: CALIV <vbmin> <vbmax>")
+                print("\twhere <vbmin> is the minimum voltage for the shot noise slope, default is 12.5 mV")
+                print("\t      <vbmax> is the maximum voltage for the shot noise slope, default is 15.0 mV\n")
                 continue
 
             print("\n\tCALIBRATE I-V OFFSET:")
 
+            # arg 1: min bias voltage
+            if len(command) > 1:
+                vbmin = float(command[1])
+            else:
+                vbmin = param['VBMIN_LINEAR']
+
+            # arg 2: max bias voltage
+            if len(command) > 2:
+                vbmax = float(command[2])
+            else:
+                vbmax = param['VBMAX_LINEAR']
+
+            vmin = vbmin / 1000 * bias.config['VMON']['GAIN'] 
+            vmax = vbmax / 1000 * bias.config['VMON']['GAIN'] 
             param["VOFFSET"] = bias.calibrate_voffset(debug=True)
-            param["IOFFSET"] = bias.calibrate_ioffset(debug=True)
+            param["IOFFSET"] = bias.calibrate_ioffset(debug=True, vmin=vmin, vmax=vmax)
 
         # Read out single values (no sweep) -------------------------------- #
 
