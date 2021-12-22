@@ -295,7 +295,9 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tCalibrate I-V offset\n")
-                print("\tUseage: CALIV")
+                print("\tUseage: CALIV <vbmin> <vbmax>")
+                print("\twhere <vbmin> is the minimum voltage for the shot noise slope, default is 12.5 mV")
+                print("\t      <vbmax> is the maximum voltage for the shot noise slope, default is 15.0 mV\n")
                 continue
 
             print("\n\tCALIBRATE I-V OFFSET:")
