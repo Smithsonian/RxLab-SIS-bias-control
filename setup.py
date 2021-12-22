@@ -1,9 +1,8 @@
-"""Setup script for RxLab-SIS-bias
+"""Setup script for RxLab-SIS-bias-control
 
 Usage (from root folder):
 
     python3 -m pip install -e .
-    sudo python3 -m pip install -e .
 
 """
 
@@ -23,22 +22,20 @@ def read(*filenames):
 
 
 setup(
-    name="RxLab-SIS-bias",
+    name="RxLab-SIS-bias-control",
     version="0.0.1.dev",
     author="John Garrett",
     author_email="john.garrett@cfa.harvard.edu",
-    description="Control the SIS bias via the MCC DAQ device",
+    description="Control the SIS bias board via an MCC DAQ device",
     url="https://github.com/Smithsonian/RxLab-SIS-bias/",
     packages=find_packages(),
     install_requires=[
-        'appdirs', 'numpy', 'matplotlib', 'uldaq',
+        'appdirs', 'numpy', 'matplotlib', 'uldaq', 'scipy',
     ],
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
     classifiers=[
         "Natural Language :: English",
-        "Programming Language :: Python :: 3.5",
-        "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Topic :: Scientific/Engineering",
     ],
