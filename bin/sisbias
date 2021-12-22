@@ -52,7 +52,7 @@ with open(param_filename) as _fin:
 try:
     # Initialize bias control
     bias = SISBias(config_file=config_filename)
-
+    
     # Set bias voltage to zero
     param['VCTRL'] = 0
     bias.set_control_voltage(param['VCTRL'])
@@ -300,8 +300,15 @@ try:
 
             print("\n\tCALIBRATE I-V OFFSET:")
 
-            param["VOFFSET"] = bias.calibrate_voffset(debug=True)
-            param["IOFFSET"] = bias.calibrate_ioffset(debug=True)
+            # # Parameters
+            # npts = 51
+            # sleep_time = 0.1  # s
+            # vbmin = -1  # mV
+            # vbmax =  1  # mV
+            # vmin = vbmin / 1000 * bias.config['VMON']['GAIN']
+            # vmax = vbmax / 1000 * bias.config['VMON']['GAIN']
+
+            param["IOFFSET"], param["VOFFSET"] = bias.calibrate_ivoffset(debug=True) #npts=npts, vmin=vmin, vmax=vmax, debug=True)
 
         # Read out single values (no sweep) -------------------------------- #
 
@@ -1017,7 +1024,8 @@ except EOFError:
 except uldaq.ul_exception.ULException:
     print("\nConnection lost to device.")
 
-except RuntimeError:
+except RuntimeError as e:
+    print(e, "\n")
     bias = None
 
 finally:
