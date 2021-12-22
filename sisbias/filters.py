@@ -56,10 +56,20 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    x = np.linspace(0, 10, 501)
-    y = np.sin(x) + (np.random.random(501) - 0.5) / 2
+    # Create noisy data
+    npts = 501
+    x = np.linspace(0, 10, npts)
+    y = np.sin(x)
+    y_noise = y + (np.random.random(npts) - 0.5) / 2
 
-    plt.plot(x, y, 'k', lw=0.5)
-    plt.plot(x, np.sin(x), 'b')
-    plt.plot(x, gauss_conv(y), 'r')
+    # Filter noisy data
+    y_filt = gauss_conv(y, 5)
+
+    # Plot results
+    plt.figure(figsize=(10,6))
+    plt.plot(x, y, 'b', label="Original Data")
+    plt.plot(x, y_noise, 'b', alpha=0.5, label="Noisy Data")
+    plt.plot(x, y_filt, 'r--', label="Filtered")
+    plt.autoscale(axis='x', enable=True, tight=True)
+    plt.legend()
     plt.show()
