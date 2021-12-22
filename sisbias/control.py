@@ -11,6 +11,7 @@ from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag,
                    DaqDevice, DigitalDirection, DigitalPortType, InterfaceType,
                    Range, ScanOption, ScanStatus, create_float_buffer,
                    get_daq_device_inventory)
+from scipy.optimize import minimize
 
 from sisbias.filters import gauss_conv
 from sisbias.util import progress_bar
@@ -677,90 +678,56 @@ class SISBias:
         else:
             return self.cal['IFCORR']
 
-    def calibrate_voffset(self, npts=10, average=1000, vmin=-0.05, vmax=0.05, verbose=True, debug=False):
+    def calibrate_ivoffset(self, npts=51, average=64, vmin=-0.5, vmax=0.5, verbose=True, debug=False):
 
-        # Measure voltage offset
-        _ = input("\n\tTurn off B-field coil. Press enter when ready.")
-        print("")
-        vsweep = np.linspace(vmin, vmax, npts)
-        vsis = np.zeros(npts)
-        isis = np.zeros(npts)
-        for i, _v in np.ndenumerate(vsweep):
-            progress_bar(i[0] + 1, npts, prefix="\tMeasuring voltage offset: ")
-            self.set_control_voltage(_v)
-            time.sleep(0.1)
-            vsis[i], isis[i], _ = self.read_all(average=average)
-        vtmp = np.linspace(vsis.min(), vsis.max(), 1000)
-        itmp = np.interp(vtmp, vsis, isis)
-        idx = np.abs(itmp).argmin()
-        error = vtmp[idx]
-        old_ioffset = self.cal['VOFFSET']
-        self.cal['VOFFSET'] += error / 2
+        # Measure I-V curve
+        data = self.measure_ivif(npts=npts, average=average, vmin=vmin, vmax=vmax, vlimit=5, sleep_time=0.1, stats=False, calibrate=False, verbose=True)
+        voltage, current = data[0,:], data[1,:]
 
-        if verbose:
-            print(f"\n\tOld voltage offset: {old_ioffset:8.4f} mV")
-            print(f"  \tNew voltage offset: {self.cal['VOFFSET']:8.4f} mV")
-            print(f"  \t-> change:          {self.cal['VOFFSET']-old_ioffset:8.4f} mV\n")
+        # Offset model
+        def model(offset):
+            # I-V curve
+            v1, i1 = voltage - offset[0], current - offset[1]
+            # Flipped I-V curve
+            v2, i2 = -v1[::-1], -i1[::-1]
+            # Interpolate to common voltage
+            x = np.linspace(-2, 2, 101)
+            y1 = np.interp(x, v1, i1)
+            y2 = np.interp(x, v2, i2)
+            # Find total error
+            return np.sum(np.abs(y1 - y2))
+
+        # Minimize to find I-V offsets
+        x0 = np.array([0, 0])
+        res = minimize(model, x0=x0)
+        voffset = res.x[0]
+        ioffset = res.x[1]
+        print(f"\n\tVoltage offset: {voffset:7.4f} mV")
+        print(f"  \tCurrent offset: {ioffset:7.4f} uA")
+        self.cal['VOFFSET'] = voffset
+        self.cal['IOFFSET'] = ioffset
 
         if debug:
-            plt.plot(vsis, isis, 'ko', label='Data')
-            plt.plot(vtmp, itmp, 'b', label='Interp.')
-            plt.axvline(0, c='k', ls='-')
-            plt.axhline(0, c='k', ls='-')
-            plt.plot([error], [0], 'r*', label='V offset')
+            # I-V curve
+            v1, i1 = voltage - voffset, current - ioffset
+            # Flipped I-V curve
+            v2, i2 = -v1[::-1], -i1[::-1]
+            # Interpolate to common voltage
+            x = np.linspace(-2, 2, 101)
+            y1 = np.interp(x, v1, i1)
+            y2 = np.interp(x, v2, i2)
+            plt.plot(x, y1, 'k', label="I-V")
+            plt.plot(x, y2, 'r', label="Flipped I-V")
             plt.xlabel("Bias voltage (mV)")
             plt.ylabel("Current (uA)")
             plt.legend()
             plt.show()
 
-        return self.cal['VOFFSET']
-
-    def calibrate_ioffset(self, npts=10, average=1000, vmin=1, vmax=1.5, verbose=True, debug=False):
-
-        # Measure current offset
-        vsweep = np.linspace(vmin, vmax, npts)
-        vsis1 = np.zeros(npts)
-        isis1 = np.zeros(npts)
-        vsis2 = np.zeros(npts)
-        isis2 = np.zeros(npts)
-        for i, _v in np.ndenumerate(vsweep):
-            progress_bar(i[0] + 1, npts, prefix="\tMeasuring current offset (pos): ")
-            self.set_control_voltage(_v)
-            time.sleep(0.1)
-            vsis1[i], isis1[i], _ = self.read_all(average=average)
-        for i, _v in np.ndenumerate(vsweep):
-            progress_bar(i[0] + 1, npts, prefix="\tMeasuring current offset (neg): ")
-            self.set_control_voltage(-_v)
-            time.sleep(0.1)
-            vsis2[i], isis2[i], _ = self.read_all(average=average)
-        vsis2 = -vsis2
-        isis2 = -isis2
-
-        # Interpolate to common bias voltage
-        vtmp = np.linspace(max(vsis1.min(), vsis2.min()), min(vsis1.max(), vsis2.max()), 100)
-        error = np.mean(np.interp(vtmp, vsis1, isis1) - np.interp(vtmp, vsis2, isis2))
-        old_ioffset = self.cal['IOFFSET']
-        self.cal['IOFFSET'] += error / 2
-
-        if verbose:
-            print(f"\n\tOld current offset: {old_ioffset:8.4f} uA")
-            print(f"  \tNew current offset: {self.cal['IOFFSET']:8.4f} uA")
-            print(f"  \t-> change:          {self.cal['IOFFSET']-old_ioffset:8.4f} uA\n")
-
-        if debug:
-            plt.figure(figsize=(5,5))
-            plt.plot(vsis1, isis1, 'ko--', label="Positive")
-            plt.plot(vsis2, isis2, 'ro--', label="Negative (reflected in x/y)")
-            plt.xlabel("Bias voltage (mV)")
-            plt.ylabel("Current (uA)")
-            plt.legend(title="Sweep")
-            plt.show()
-
-        return self.cal['IOFFSET']
+        return self.cal['VOFFSET'], self.cal['IOFFSET']
 
     # Measure I-V/IF data ------------------------------------------------ ###
 
-    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None, verbose=True):
+    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None, calibrate=True, verbose=True):
         """Measure I-V curve and IF power as a function of bias voltage.
 
         Args:
@@ -792,7 +759,7 @@ class SISBias:
             for i, _vctrl in np.ndenumerate(vctrl_sweep):
                 self.set_control_voltage(_vctrl, vlimit=vlimit)
                 time.sleep(sleep_time)
-                results[:, i] = np.array(self.read_all(average=average, stats=stats)).reshape(size, 1)
+                results[:, i] = np.array(self.read_all(average=average, stats=stats, calibrate=calibrate)).reshape(size, 1)
                 if verbose:
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix=msg)
         except KeyboardInterrupt:
@@ -860,8 +827,9 @@ class SISBias:
                 fig.canvas.flush_events()
 
             except KeyboardInterrupt:
-                print("")
                 plt.close('all')
+                self.set_control_voltage(0)
+                print("\n\tControl voltage set to 0 V.\n")
                 break
 
     def noise_statistics(self, vcontrol=0, npts=50000, vlimit=5):
