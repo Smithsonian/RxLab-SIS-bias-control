@@ -4,10 +4,10 @@ import numpy as np
 
 
 def gauss_conv(x, sigma=10, ext_x=3):
-    """Smooth data using a Gaussian convolution.
+    """Smooth data using a Gaussian convolution filter.
 
     Args:
-        x (ndarray): noisy data
+        x (ndarray): noisy data to filter
         sigma (float): std. dev. of Gaussian curve, given as number of data points
         ext_x (float): Gaussian curve will extend from ext_x * sigma in each direction
 
@@ -20,8 +20,7 @@ def gauss_conv(x, sigma=10, ext_x=3):
     wlen = len(wind)
 
     assert wlen <= len(x), "Window size must be smaller than data size"
-    assert sigma * ext_x >= 1, \
-        "Window size must be larger than 1. Increase ext_x."
+    assert sigma * ext_x >= 1, "Window size must be larger than 1. Increase ext_x."
 
     s = np.r_[x[wlen - 1:0:-1], x, x[-2:-wlen - 1:-1]]
     y_out = np.convolve(wind / wind.sum(), s, mode='valid')
@@ -58,8 +57,7 @@ if __name__ == "__main__":
 
     # Create noisy data
     npts = 501
-    x = np.linspace(0, 10, npts)
-    y = np.sin(x)
+    y = np.sin(np.linspace(0, 10, npts))
     y_noise = y + (np.random.random(npts) - 0.5) / 2
 
     # Filter noisy data
@@ -67,9 +65,9 @@ if __name__ == "__main__":
 
     # Plot results
     plt.figure(figsize=(10,6))
-    plt.plot(x, y, 'b', label="Original Data")
-    plt.plot(x, y_noise, 'b', alpha=0.5, label="Noisy Data")
-    plt.plot(x, y_filt, 'r--', label="Filtered")
+    plt.plot(y, 'b', label="Original Data")
+    plt.plot(y_noise, 'b', alpha=0.5, label="Noisy Data")
+    plt.plot(y_filt, 'r--', label="Filtered")
     plt.autoscale(axis='x', enable=True, tight=True)
     plt.legend()
     plt.show()
