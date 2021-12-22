@@ -1,15 +1,9 @@
 .idea/
+.DS_Store
 
+RxLab_SIS_bias.egg-info/
 __pycache__/
 
-misc/
 mcc-examples/
+misc/
 old/
-
-sis_bias.py.bak
-
-*.egg-info/
-
-tmp-*
-
-params.json
