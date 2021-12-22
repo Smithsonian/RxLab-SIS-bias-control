@@ -1,4 +1,4 @@
-"""Misc utilities."""
+"""Miscellaneous utilities."""
 
 import os
 
@@ -47,11 +47,15 @@ def ask_filename(msg="\tFile name (omit extension): "):
             return fname
 
 
+# MAIN -------------------------------------------------------------------- ##
+
 if __name__ == "__main__":
 
     import time
 
-    _ = ask_filename()
+    filename = ask_filename()
+    if filename is None:
+        print("\tNo filename given.\n")
 
     npts = 100
     for i in range(npts+1):

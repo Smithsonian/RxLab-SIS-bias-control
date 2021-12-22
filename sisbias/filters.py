@@ -51,6 +51,8 @@ def _gauss(sigma, n_sigma=3):
     return y
 
 
+# MAIN -------------------------------------------------------------------- ##
+
 if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
