@@ -36,12 +36,14 @@ See [uldaq webpage](https://github.com/mccdaq/uldaq) for other platforms.
 You can then download and install this package:
 ```bash
 git clone https://github.com/Smithsonian/RxLab-SIS-bias
-cd RxLab-SIS-bias
+cd RxLab-SIS-bias/bin
+chmod 700 *
+cd ..
 python3 -m pip install -e .
 ```
 
-Useage
-------
+Usage
+-----
 
 All of the code for interfacing with the MCC DAQ device + SIS bias board is contained in [the `sisbias/` directory](https://github.com/Smithsonian/RxLab-SIS-bias/tree/main/sisbias), with the most important code in [the `control.py` file](https://github.com/Smithsonian/RxLab-SIS-bias/blob/main/sisbias/control.py).
 
