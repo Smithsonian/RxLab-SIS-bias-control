@@ -65,9 +65,10 @@ try:
 
     # Connect to IF filter
     if args.filteraddr is not None:
+        print(f"Connecting to IF YIG filter (IP: {args.filteraddr})...")
         if_filter = YigFilter(args.filteraddr)
         if_filter.set_frequency(param['IFFREQ'])
-        print("Connected to IF YIG filter\n")
+        print("done.\n")
     else:
         print("No IF filter specified\n")
         if_filter = None
@@ -282,12 +283,12 @@ try:
                 average = 10_000
 
             # Calculate IF power offset
-            param["IFOFFSET"] = bias.calibrate_if_power_offset(average=average)
+            param["IFOFFSET"] = bias.calibrate_if_offset(average=average)
 
             # Calculate shot noise slope
             vmin = vbmin / 1000 * bias.config['VMON']['GAIN'] 
             vmax = vbmax / 1000 * bias.config['VMON']['GAIN'] 
-            param["IFCORR"] = bias.calibrate_if_power(vmin=vmin, vmax=vmax, average=average, njunc=param["NJUNC"], extra=False, debug=True)
+            param["IFCORR"] = bias.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param["NJUNC"], extra=False, debug=True)
 
         # CALIV: Calibrate I-V data
         elif command[0] == "CALIV":
@@ -310,7 +311,7 @@ try:
             # vmin = vbmin / 1000 * bias.config['VMON']['GAIN']
             # vmax = vbmax / 1000 * bias.config['VMON']['GAIN']
 
-            param["IOFFSET"], param["VOFFSET"] = bias.calibrate_ivoffset(debug=True) #npts=npts, vmin=vmin, vmax=vmax, debug=True)
+            param["IOFFSET"], param["VOFFSET"] = bias.calibrate_iv_offset(debug=True) #npts=npts, vmin=vmin, vmax=vmax, debug=True)
 
         # Read out single values (no sweep) -------------------------------- #
 
@@ -538,25 +539,19 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tPlot I-V/IF data in real-time\n")
-                print("\tUseage: MONITOR <npts> <period>")
-                print("\t        MON <npts> <period>")
-                print("\twhere <npts> is the number of points")
-                print("\t      <period> is the sweep period\n")
+                print("\tUseage: MONITOR <resistance>")
+                print("\t        MON <resistance>")
+                print("\twhere <resistance> will plot a resistance line for reference\n")
                 continue
 
             print("\n\tMONITOR:")
 
             if len(command) > 1:
-                npts = float(command[1])
+                resistance = float(command[1])
             else:
-                npts = param['NPTS']
+                resistance = None
 
-            if len(command) > 2:
-                period = float(command[2])
-            else:
-                period = param['PERIOD']
-
-            bias.monitor(npts=npts, period=period, vmin=param['VMIN'], vmax=param['VMAX'], vlimit=param['VLIMIT'])
+            bias.monitor(npts=param['NPTS'], period=param['PERIOD'], vmin=param['VMIN'], vmax=param['VMAX'], vlimit=param['VLIMIT'], resistance=resistance)
 
         # MEASURE: Measure IV / IF curve
         elif command[0] == "MEASURE" or command[0] == "M":
