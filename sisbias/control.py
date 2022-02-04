@@ -1,4 +1,4 @@
-"""Control the SIS bias using an MCC DAQ device."""
+"""Control the SIS bias board using an MCC DAQ device."""
 
 import json
 import time
@@ -33,7 +33,15 @@ AI_SCAN_FLAG = AInScanFlag.DEFAULT
 
 
 class SISBias:
-    """Class for controlling the SIS bias via the MCC DAQ."""
+    """Class for controlling the SIS bias board using an MCC DAQ device.
+
+    Args:
+        config_file (str): configuration file, if None use default file,
+            default is None
+        cal_file (str): calibration file, if None use default file, default
+            is None
+
+    """
     
     def __init__(self, config_file=None, cal_file=None):
         
@@ -43,15 +51,25 @@ class SISBias:
         self.config_file = config_file
         if self.config_file is None:
             self.config_file = user_config_dir("rxlab-sis-bias.config")
-        with open(config_file) as _fin:
-            self.config = json.load(_fin)
+        try:
+            with open(self.config_file) as _fin:
+                self.config = json.load(_fin)
+        except FileNotFoundError as e:
+            print("\nConfiguration file not found.")
+            print("Run \"sisbias-init-config-v0\" or \"sisbias-init-config-v3\" to initialize this file.\n")
+            raise e
 
-        # Read calbration file file
+        # Read calibration file file
         self.cal_file = cal_file
         if self.cal_file is None:
             self.cal_file = user_config_dir("rxlab-sis-bias.cal")
-        with open(self.cal_file) as _fin:
-            self.cal = json.load(_fin)
+        try:
+            with open(self.cal_file) as _fin:
+                self.cal = json.load(_fin)
+        except FileNotFoundError as e:
+            print("\nCalibration file not found.")
+            print("Run \"sisbias-init-cal\" to initialize this file.\n")
+            raise e
 
         # Find all available DAQ devices
         devices = get_daq_device_inventory(INTERFACE_TYPE)
@@ -593,11 +611,77 @@ class SISBias:
 
     # Calibrate ---------------------------------------------------------- ###
 
-    def calibrate_if_power_offset(self, vcontrol=0.2, average=10_000, verbose=True):
+    def calibrate_iv_offset(self, npts=51, average=64, vmin=-0.5, vmax=0.5, verbose=True, debug=False):
+        """Calibrate offset in I-V curve.
+
+        Args:
+            npts (int): number of data points, default is 51
+            average (int): averaging, defualt is 64
+            vmin (float): minimum control voltage, default is -0.5
+            vmax (float): maximum control voltage, default is 0.5
+            verbose (bool): verbosity, default is True
+            debug (bool): debugging, plots data, default is False
+
+        Returns:
+            tuple: voltage and current offset
+        """
+
+        # Measure I-V curve
+        data = self.measure_ivif(npts=npts, average=average, vmin=vmin,
+                                 vmax=vmax, vlimit=5, sleep_time=0.1,
+                                 stats=False, calibrate=False, verbose=True)
+        voltage, current = data[0, :], data[1, :]
+
+        # Offset model
+        def model(offset):
+            # I-V curve
+            vv1, ii1 = voltage - offset[0], current - offset[1]
+            # Flipped I-V curve
+            vv2, ii2 = -vv1[::-1], -ii1[::-1]
+            # Interpolate to common voltage
+            xx = np.linspace(-2, 2, 101)
+            yy1 = np.interp(xx, vv1, ii1)
+            yy2 = np.interp(xx, vv2, ii2)
+            # Find total error
+            return np.sum(np.abs(yy1 - yy2))
+
+        # Minimize to find I-V offsets
+        x0 = np.array([0, 0])
+        res = minimize(model, x0=x0)
+        voffset = res.x[0]
+        ioffset = res.x[1]
+        if verbose:
+            print(f"\n\tVoltage offset: {voffset:7.4f} mV")
+            print(f"  \tCurrent offset: {ioffset:7.4f} uA")
+        self.cal['VOFFSET'] = voffset
+        self.cal['IOFFSET'] = ioffset
+
+        if debug:
+            # I-V curve
+            v1, i1 = voltage - voffset, current - ioffset
+            # Flipped I-V curve
+            v2, i2 = -v1[::-1], -i1[::-1]
+            # Interpolate to common voltage
+            x = np.linspace(-2, 2, 101)
+            y1 = np.interp(x, v1, i1)
+            y2 = np.interp(x, v2, i2)
+            plt.plot(x, y1, 'k', label="I-V")
+            plt.plot(x, y2, 'r', label="Flipped I-V")
+            plt.xlabel("Bias voltage (mV)")
+            plt.ylabel("Current (uA)")
+            plt.legend()
+            plt.show()
+
+        return self.cal['VOFFSET'], self.cal['IOFFSET']
+
+    def calibrate_if_offset(self, vcontrol=0.2, average=10_000, verbose=True):
         """Calibrate IF power offset.
 
         Args:
+            vcontrol (float): control voltage for offset integration, default
+                is 0.2
             average (int): averaging, default is 10000
+            verbose (bool): verbosity, default is True
 
         Returns:
             float: if power offset, in units [AU]
@@ -624,7 +708,7 @@ class SISBias:
 
         return self.cal['IFOFFSET']
 
-    def calibrate_if_power(self, vmin=2.5, vmax=3, average=2000, npts=10, sleep_time=0.2, njunc=3, extra=False, verbose=True, debug=False):
+    def calibrate_if(self, vmin=2.5, vmax=3, average=2000, npts=10, sleep_time=0.2, njunc=3, extra=False, verbose=True, debug=False):
         """Calibrate IF power using shot noise slope.
 
         Args:
@@ -632,9 +716,11 @@ class SISBias:
             vmax (float): maximum control voltage, in [V], default is 3.0
             average (int): averaging, default is 1000
             npts (int): number of points, default is 10
+            sleep_time (float): time to sleep between pionts, default is 0.2
             njunc (int): number of junctions, default is 3
             extra (bool): return extra info
-            debug (bool): debug
+            verbose (bool): verbosity, default is True
+            debug (bool): debug, default is False
 
         Returns:
             IF calibration, in [K/AU]
@@ -678,53 +764,6 @@ class SISBias:
         else:
             return self.cal['IFCORR']
 
-    def calibrate_ivoffset(self, npts=51, average=64, vmin=-0.5, vmax=0.5, verbose=True, debug=False):
-
-        # Measure I-V curve
-        data = self.measure_ivif(npts=npts, average=average, vmin=vmin, vmax=vmax, vlimit=5, sleep_time=0.1, stats=False, calibrate=False, verbose=True)
-        voltage, current = data[0,:], data[1,:]
-
-        # Offset model
-        def model(offset):
-            # I-V curve
-            v1, i1 = voltage - offset[0], current - offset[1]
-            # Flipped I-V curve
-            v2, i2 = -v1[::-1], -i1[::-1]
-            # Interpolate to common voltage
-            x = np.linspace(-2, 2, 101)
-            y1 = np.interp(x, v1, i1)
-            y2 = np.interp(x, v2, i2)
-            # Find total error
-            return np.sum(np.abs(y1 - y2))
-
-        # Minimize to find I-V offsets
-        x0 = np.array([0, 0])
-        res = minimize(model, x0=x0)
-        voffset = res.x[0]
-        ioffset = res.x[1]
-        print(f"\n\tVoltage offset: {voffset:7.4f} mV")
-        print(f"  \tCurrent offset: {ioffset:7.4f} uA")
-        self.cal['VOFFSET'] = voffset
-        self.cal['IOFFSET'] = ioffset
-
-        if debug:
-            # I-V curve
-            v1, i1 = voltage - voffset, current - ioffset
-            # Flipped I-V curve
-            v2, i2 = -v1[::-1], -i1[::-1]
-            # Interpolate to common voltage
-            x = np.linspace(-2, 2, 101)
-            y1 = np.interp(x, v1, i1)
-            y2 = np.interp(x, v2, i2)
-            plt.plot(x, y1, 'k', label="I-V")
-            plt.plot(x, y2, 'r', label="Flipped I-V")
-            plt.xlabel("Bias voltage (mV)")
-            plt.ylabel("Current (uA)")
-            plt.legend()
-            plt.show()
-
-        return self.cal['VOFFSET'], self.cal['IOFFSET']
-
     # Measure I-V/IF data ------------------------------------------------ ###
 
     def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None, calibrate=True, verbose=True):
@@ -739,6 +778,8 @@ class SISBias:
             sleep_time (float): sleep time between voltage points, in [s], default is 0.1
             stats (bool): return statistics, default is True
             msg (str): progress message
+            calibrate (bool): calibrate data, default is True
+            verbose (bool): verbosity, default is True
 
         Returns:
             tuple: voltage, voltage error, current, current error, IF power, IF power error
@@ -772,7 +813,7 @@ class SISBias:
         
         return results[:, idx]
 
-    def monitor(self, npts=1000, period=0.2, vmin=-1, vmax=1, vlimit=5):
+    def monitor(self, npts=1000, period=0.2, vmin=-1, vmax=1, vlimit=5, resistance=None):
         """Plot real-time monitor.
 
         Args:
@@ -781,6 +822,7 @@ class SISBias:
             vmin (float): minimum control voltage, in [V], default is -1
             vmax (float): maximum control voltage, in [V], default is 1
             vlimit (float): hard limit on control voltage, in [V], default is 5
+            resistance (float): plot a line of constant resistance, in [ohms], default is None
 
         """
 
@@ -793,6 +835,11 @@ class SISBias:
         # Read I-V curve
         voltage, current, ifpower = self.read_iv_curve_buffer()
 
+        # Constant resistance line
+        if resistance is not None:
+            irmin = voltage.min() / resistance * 1e3
+            irmax = voltage.max() / resistance * 1e3
+
         # Create figure
         plt.ion()
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -802,10 +849,16 @@ class SISBias:
         ax2.set_ylabel("IF power (K)")
         ax1.set_xlim([voltage.min(), voltage.max()])
         ax2.set_xlim([voltage.min(), voltage.max()])
-        ax1.set_ylim([current.min(), current.max()])
+        if resistance is None:
+            ax1.set_ylim([current.min(), current.max()])
+        else:
+            ax1.set_ylim([irmin, irmax])
+            line0, = ax1.plot([voltage.min(), voltage.max()], [irmin, irmax], 'r', label=f"{resistance:.0f} ohms")
         ax2.set_ylim([0, ifpower.max() * 2])
-        line1, = ax1.plot([0], [0], 'k.', ms=1)
-        line2, = ax2.plot([0], [0], 'k.', ms=1)
+        line1, = ax1.plot([0], [0], 'k.', ms=1, label="Data")
+        line2, = ax2.plot([0], [0], 'k.', ms=1, label="Data")
+        if resistance is not None:
+            ax1.legend()
         fig.canvas.draw()
         plt.show()
 
