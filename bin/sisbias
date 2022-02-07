@@ -302,15 +302,7 @@ try:
                 continue
 
             print("\n\tCALIBRATE I-V OFFSET:")
-
-            # # Parameters
-            # npts = 51
-            # sleep_time = 0.1  # s
-            # vbmin = -1  # mV
-            # vbmax =  1  # mV
-            # vmin = vbmin / 1000 * bias.config['VMON']['GAIN']
-            # vmax = vbmax / 1000 * bias.config['VMON']['GAIN']
-
+            
             param["IOFFSET"], param["VOFFSET"] = bias.calibrate_iv_offset(debug=True) #npts=npts, vmin=vmin, vmax=vmax, debug=True)
 
         # Read out single values (no sweep) -------------------------------- #
