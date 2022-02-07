@@ -611,7 +611,7 @@ class SISBias:
 
     # Calibrate ---------------------------------------------------------- ###
 
-    def calibrate_iv_offset(self, npts=51, average=64, vmin=-0.5, vmax=0.5, verbose=True, debug=False):
+    def calibrate_iv_offset(self, npts=101, average=64, vmin=-0.5, vmax=0.5, verbose=True, debug=False):
         """Calibrate offset in I-V curve.
 
         Args:
@@ -651,8 +651,17 @@ class SISBias:
         voffset = res.x[0]
         ioffset = res.x[1]
         if verbose:
-            print(f"\n\tVoltage offset: {voffset:7.4f} mV")
-            print(f"  \tCurrent offset: {ioffset:7.4f} uA")
+            print(f"\n\tVoltage offset: {self.cal['VOFFSET']:7.4f} mV (previous)")
+            print(f"  \tVoltage offset: {voffset:7.4f} mV (new)")
+            print(f"\n\tCurrent offset: {self.cal['IOFFSET']:7.4f} uA (previous)")
+            print(f"  \tCurrent offset: {ioffset:7.4f} uA (new)\n")
+
+        # Force i=0 v=0
+        vtmp = np.linspace(-0.1, 0.1, 1001)
+        itmp = np.interp(vtmp, data[0, :] - voffset, data[1, :] - ioffset)
+        voffset += vtmp[np.abs(itmp).argmin()]
+
+        # Save to attributes
         self.cal['VOFFSET'] = voffset
         self.cal['IOFFSET'] = ioffset
 
@@ -662,11 +671,15 @@ class SISBias:
             # Flipped I-V curve
             v2, i2 = -v1[::-1], -i1[::-1]
             # Interpolate to common voltage
-            x = np.linspace(-2, 2, 101)
-            y1 = np.interp(x, v1, i1)
-            y2 = np.interp(x, v2, i2)
-            plt.plot(x, y1, 'k', label="I-V")
-            plt.plot(x, y2, 'r', label="Flipped I-V")
+            # x = np.linspace(-2, 2, 101)
+            # y1 = np.interp(x, v1, i1)
+            # y2 = np.interp(x, v2, i2)
+            # plt.plot(x, y1, 'k', label="I-V")
+            # plt.plot(x, y2, 'r', label="Flipped I-V")
+            plt.plot(v1, i1, 'k', label="I-V")
+            plt.plot(v2, i2, 'r', label="Flipped I-V")
+            plt.axvline(0, c='k', lw=0.5)
+            plt.axhline(0, c='k', lw=0.5)
             plt.xlabel("Bias voltage (mV)")
             plt.ylabel("Current (uA)")
             plt.legend()
