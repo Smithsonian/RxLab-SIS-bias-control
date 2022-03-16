@@ -1,0 +1,1655 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""Interactive script for controlling the SIS bias."""
+
+import argparse
+import json
+import time
+import numpy as np
+import matplotlib.pyplot as plt 
+import uldaq
+
+from appdirs import user_config_dir
+
+from sisbias import SISBias, progress_bar, ask_filename
+from labinstruments.microlambda import YigFilter
+
+try:
+    plt.style.use(["science", "sans", "no-latex"])
+except ModuleNotFoundError:
+    print("Matplotlib styles not found")
+    print("\ttry: pip install SciencePlots")
+except OSError:
+    print("Matplot styles not found")
+    print("\ttry: pip install SciencePlots")
+
+# ----------------------------------------------------------------------------
+
+daq_id1 = "01D87C3C"
+daq_id2 = "01D87C1E"
+config_filename1 = user_config_dir("2sb-mixer1.config")
+config_filename2 = user_config_dir("2sb-mixer2.config")
+param_filename1 = user_config_dir("2sb-mixer1.param")
+param_filename2 = user_config_dir("2sb-mixer2.param")
+cal_filename1 = user_config_dir("2sb-mixer1.cal")
+cal_filename2 = user_config_dir("2sb-mixer2.cal")
+        
+filteraddr = "192.168.1.15"
+
+with open(param_filename1) as _fin:
+    param1 = json.load(_fin)
+
+with open(param_filename2) as _fin:
+    param2 = json.load(_fin)
+
+# ----------------------------------------------------------------------------
+
+try:
+    # Initialize bias control
+    bias1 = SISBias(config_file=config_filename1, cal_file=cal_filename1, daq_id=daq_id1, name="Channel 1")
+    bias2 = SISBias(config_file=config_filename2, cal_file=cal_filename2, daq_id=daq_id2, name="Channel 2")
+    
+    # Set bias voltage to zero
+    param1['VCTRL'] = 0
+    param2['VCTRL'] = 0
+    bias1.set_control_voltage(param1['VCTRL'])
+    bias2.set_control_voltage(param2['VCTRL'])
+
+    # Save voltage / current gain to param (from config file)
+    param1["VMONGAIN"] = bias1.config['VMON']['GAIN']
+    param2["VMONGAIN"] = bias2.config['VMON']['GAIN']
+    param1["IMONGAIN"] = bias1.config['IMON']['GAIN']
+    param2["IMONGAIN"] = bias2.config['IMON']['GAIN']
+    param1["VMONOFFSET"] = bias1.config['VMON']['OFFSET']
+    param2["VMONOFFSET"] = bias2.config['VMON']['OFFSET']
+    param1["IMONOFFSET"] = bias1.config['IMON']['OFFSET']
+    param2["IMONOFFSET"] = bias2.config['IMON']['OFFSET']
+
+    # # Connect to IF filter
+    # if args.filteraddr is not None:
+    #     print(f"Connecting to IF YIG filter (IP: {args.filteraddr})...", end=" ")
+    #     if_filter = YigFilter(args.filteraddr)
+    #     if_filter.set_frequency(param['IFFREQ'])
+    #     print("done\n")
+    # else:
+    #     print("No IF filter specified\n")
+    #     if_filter = None
+
+    print("\nRemember to specify measurement parameters:")
+    print("\t-device, njunc, icoil, freq, etc.\n")
+
+    # for interactive plots...
+    plt.ion()
+
+    # Loop continuously for interactive environment
+    while True:
+
+        # Get next command
+        command = input(">> ")
+        command = command.split()
+        if len(command) == 0:
+            continue
+        if not isinstance(command, list):
+            command = [command, ]
+        command[0] = command[0].upper()
+
+        # Set parameters --------------------------------------------------- #
+
+        skip_commands = ["FREQUENCY", "FREQ", "F", "IFFREQUENCY", "IFFREQ", 
+                         "IF", "VCTRL1", "V1", "VCTRL2", "V2", "VBIAS1", "VB1",
+                         "VBIAS2", "VB2"]
+        device_specific = ["DEVICE", "NJUNC", "ICOIL", "VCTRL"]
+
+        # PARAMETERS: CHANNEL 1
+        if command[0][-1:] == "1" and command[0][:-1] in param1.keys() and command[0][:-1] not in skip_commands and command[0] not in skip_commands:
+
+            # Print parameter value
+            if len(command) == 1:
+                print(f"\n\t{command[0][:-1]} : {param1[command[0][:-1]]}\n")
+            # Set parameter value
+            elif len(command) == 2:
+                # String parameters
+                if command[0][:-1].upper() in ["LNA", "DEVICE"]:
+                    param1[command[0][:-1].upper()] = command[1]
+                # Float parameters
+                else:
+                    try:
+                        param1[command[0][:-1]] = float(command[1])
+                    except ValueError:
+                        print("\n\tError: Value must be int or float.\n")
+            # Error
+            else:
+                print("\n\tError too many values provided for parameter.")
+
+        # PARAMETERS: CHANNEL 2
+        elif command[0][-1:] == "2" and command[0][:-1] in param2.keys() and command[0][:-1] not in skip_commands and command[0] not in skip_commands:
+
+            # Print parameter value
+            if len(command) == 1:
+                print(f"\n\t{command[0][:-1]} : {param2[command[0][:-1]]}\n")
+            # Set parameter value
+            elif len(command) == 2:
+                # String parameters
+                if command[0][:-1].upper() in ["LNA", "DEVICE"]:
+                    param2[command[0][:-1].upper()] = command[1]
+                # Float parameters
+                else:
+                    try:
+                        param2[command[0][:-1]] = float(command[1])
+                    except ValueError:
+                        print("\n\tError: Value must be int or float.\n")
+            # Error
+            else:
+                print("\n\tError too many values provided for parameter.")
+
+        # PARAMETERS: BOTH CHANNELS
+        elif command[0] in param1.keys() and command[0] not in skip_commands and command[0] not in device_specific:
+
+            # Print parameter value
+            if len(command) == 1:
+                print(f"\n\t{command[0]} : {param1[command[0]]}\n")
+            # Set parameter value
+            elif len(command) == 2:
+                # String parameters
+                if command[0].upper() in ["LNA", "DEVICE"]:
+                    param1[command[0].upper()] = command[1]
+                    param2[command[0].upper()] = command[1]
+                # Float parameters
+                else:
+                    try:
+                        param1[command[0]] = float(command[1])
+                        param2[command[0]] = float(command[1])
+                    except ValueError:
+                        print("\n\tError: Value must be int or float.\n")
+            # Error
+            else:
+                print("\n\tError too many values provided for parameter.")
+
+        # FREQ: Record LO frequency (no action)
+        elif command[0] == "FREQ" or command[0] == "F":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet LO frequency parameter (no action)\n")
+                print("\tUseage: FREQ <freq>")
+                print("\t        F <freq>")
+                print("\twhere <freq> is the frequency in units [GHz]\n")
+                continue
+
+            if len(command) > 1:
+                try:
+                    param1['FREQ'] = float(command[1])
+                    param2['FREQ'] = float(command[1])
+                    if param1['FREQ'] != 0:
+                        print(f"\n\tSource frequency: {param1['FREQ']/18:6.2f} GHz (x18)")
+                        print(f"\tGunn frequency:   {param1['FREQ']/3:6.2f} GHz (x3)")
+                        print(f"\tLO frequency:     {param1['FREQ']:6.2f} GHz\n")
+                    else:
+                        print("\n\tDC (no LO pumping)\n")
+                except ValueError:
+                    print("\n\tError: Frequency must be a float.\n")
+            else:
+                print(f"\n\tLO frequency: {param1['FREQ']:.1f} GHz\n")
+
+#         # IFFREQ: Set IF frequency
+#         elif command[0] == "IFFREQ" or command[0] == "IF":
+
+#             # Print help
+#             if len(command) == 2 and command[1].upper() == "H":
+#                 print("\n\tSet IF frequency\n")
+#                 print("\tUseage: IFFREQ <freq>")
+#                 print("\t        IF <freq>")
+#                 print("\twhere <freq> is the frequency in units [GHz]\n")
+#                 continue
+
+#             if len(command) > 1:
+#                 try:
+#                     param['IFFREQ'] = float(command[1])
+#                     if_filter.set_frequency(param['IFFREQ'])
+#                 except ValueError:
+#                     print("\n\tError: Frequency must be a float.\n")
+#             else:
+#                 print(f"\n\tIF frequency: {param['IFFREQ']:.3f}\n")
+
+        # VCTRL1: Set control voltage (constant) of channel 1
+        elif command[0] == "V1" or command[0] == "VCTRL1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet control voltage of channel 1\n")
+                print("\tUseage: VCTRL1 <vcontrol>")
+                print("\t        V1 <vcontrol>")
+                print("\twhere <vcontrol> is the voltage in units [V]\n")
+                continue
+
+            if len(command) == 1:
+                print(f"\n\tControl voltage (channel 1): {param1['VCTRL']:6.2f} V\n")
+            else:
+                param1['VCTRL'] = float(command[1])
+                print(f"\n\tControl voltage: {param1['VCTRL']:6.2f} V")
+                bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+                time.sleep(0.1)
+                vmon_mv = bias1.read_voltage()
+                print(f"\tVoltage monitor: {vmon_mv:6.2f} mV\n")
+                imon_ua = bias1.read_current()
+                print(f"\tCurrent monitor: {imon_ua:6.2f} uA\n")
+
+        # VCTRL2: Set control voltage (constant) of channel 2
+        elif command[0] == "V2" or command[0] == "VCTRL2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet control voltage\n")
+                print("\tUseage: VCTRL2 <vcontrol>")
+                print("\t        V2 <vcontrol>")
+                print("\twhere <vcontrol> is the voltage in units [V]\n")
+                continue
+
+            if len(command) == 1:
+                print(f"\n\tControl voltage: {param2['VCTRL']:6.2f} V\n")
+            else:
+                param2['VCTRL'] = float(command[1])
+                print(f"\n\tControl voltage: {param2['VCTRL']:6.2f} V")
+                bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+                time.sleep(0.1)
+                vmon_mv = bias2.read_voltage()
+                print(f"\tVoltage monitor: {vmon_mv:6.2f} mV\n")
+                imon_ua = bias2.read_current()
+                print(f"\tCurrent monitor: {imon_ua:6.2f} uA\n")
+
+        # VBIAS1: Set bias voltage (constant)
+        elif command[0] == "VBIAS1" or command[0] == "VB1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet bias voltage for channel 1\n")
+                print("\tUseage: VBIAS1 <vbias> <iterations>")
+                print("\t        VB1 <vbias> <iterations>")
+                print("\twhere <vbias> is the voltage in units [mV] (default 0)")
+                print("\t      <iterations> is the number of iterations (default 3)\n")
+                continue
+
+            # arg 1: target value
+            try: 
+                vbias = float(command[1])
+            except (IndexError, ValueError) as e:
+                vbias = None
+
+            # arg 2: number of iterations
+            try:
+                iterations = int(command[2])
+            except (IndexError, ValueError) as e:
+                iterations = 3
+            
+            if vbias is not None:
+                print(f"\n\tBias target:   {vbias:6.2f} mV\n")
+                _, param1['VCTRL'] = bias1.set_bias_voltage(vbias, iterations=iterations, verbose=True, vlimit=param1["VLIMIT"])
+            else:
+                _ = bias1.read_voltage(average=64, verbose=True)
+
+        # VBIAS2: Set bias voltage (constant)
+        elif command[0] == "VBIAS2" or command[0] == "VB2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet bias voltage for channel 2\n")
+                print("\tUseage: VBIAS2 <vbias> <iterations>")
+                print("\t        VB2 <vbias> <iterations>")
+                print("\twhere <vbias> is the voltage in units [mV] (default 0)")
+                print("\t      <iterations> is the number of iterations (default 3)\n")
+                continue
+
+            # arg 1: target value
+            try: 
+                vbias = float(command[1])
+            except (IndexError, ValueError) as e:
+                vbias = None
+
+            # arg 2: number of iterations
+            try:
+                iterations = int(command[2])
+            except (IndexError, ValueError) as e:
+                iterations = 3
+            
+            if vbias is not None:
+                print(f"\n\tBias target:   {vbias:6.2f} mV\n")
+                _, param2['VCTRL'] = bias2.set_bias_voltage(vbias, iterations=iterations, verbose=True, vlimit=param2["VLIMIT"])
+            else:
+                _ = bias2.read_voltage(average=64, verbose=True)
+
+        # VBMIN: Set minimum bias voltage
+        elif command[0] == "VBMIN":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet minimum bias voltage (both channels)\n")
+                print("\tUseage: VBMIN <vbias>")
+                print("\twhere <vbias> is the voltage in units [mV] (default 0)\n")
+                continue
+
+            # arg 1: target value
+            try: 
+                vbias = float(command[1])
+                param1['VMIN'] = vbias / 1000 * bias1.config['VMON']['GAIN']
+                param2['VMIN'] = vbias / 1000 * bias2.config['VMON']['GAIN']
+            except (IndexError, ValueError) as e:
+                vbias = param1['VMIN'] * 1000 / bias1.config['VMON']['GAIN']
+                vbias = param2['VMIN'] * 1000 / bias2.config['VMON']['GAIN']
+
+            print(f"\n\tBias voltage (min):    {vbias:.1f} mV")
+            print(f"  \tControl voltage (min): {param1['VMIN']:.1f} V\n")
+
+        # VBMAX: Set maximum bias voltage
+        elif command[0] == "VBMAX":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet maximum bias voltage (both channels)\n")
+                print("\tUseage: VBMAX <vbias>")
+                print("\twhere <vbias> is the voltage in units [mV] (default 0)\n")
+                continue
+
+            # arg 1: target value
+            try: 
+                vbias = float(command[1])
+                param1['VMAX'] = vbias / 1000 * bias1.config['VMON']['GAIN']
+                param2['VMAX'] = vbias / 1000 * bias2.config['VMON']['GAIN']
+            except (IndexError, ValueError) as e:
+                vbias = param1['VMAX'] * 1000 / bias1.config['VMON']['GAIN']
+                vbias = param2['VMAX'] * 1000 / bias2.config['VMON']['GAIN']
+
+            print(f"\n\tBias voltage (max):    {vbias:.1f} mV")
+            print(f"  \tControl voltage (max): {param1['VMAX']:.1f} V\n")
+
+        # Calibration ------------------------------------------------------ #
+
+        # CALIF1: Calibrate IF power (channel 1)
+        elif command[0] == "CALIF":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tCalibrate IF power (both channels)\n")
+                print("\tUseage: CALIF <vbmin> <vbmax> <average>")
+                print("\twhere <vbmin> is the minimum voltage for the shot noise slope, default is 12.5 mV")
+                print("\t      <vbmax> is the maximum voltage for the shot noise slope, default is 15.0 mV")
+                print("\t      <average> is the averaging, default is 1000\n")
+                continue
+
+            print("\n\tCALIBRATE IF POWER (BOTH CHANNELS):")
+
+            # arg 1: min bias voltage
+            if len(command) > 1:
+                vbmin = float(command[1])
+            else:
+                vbmin = param1['VBMIN_LINEAR']
+
+            # arg 2: max bias voltage
+            if len(command) > 2:
+                vbmax = float(command[2])
+            else:
+                vbmax = param1['VBMAX_LINEAR']
+
+            # arg 3: averaging
+            if len(command) > 3:
+                average = int(command[3])
+            else:
+                average = 10_000
+
+            # Calculate IF power offset
+            param1["IFOFFSET"] = bias1.calibrate_if_offset(average=average)
+            param2["IFOFFSET"] = bias2.calibrate_if_offset(average=average)
+
+            # Calculate shot noise slope
+            vmin = vbmin / 1000 * bias1.config['VMON']['GAIN'] 
+            vmax = vbmax / 1000 * bias1.config['VMON']['GAIN'] 
+            param1["IFCORR"] = bias1.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param1["NJUNC"], extra=False, debug=True)
+            vmin = vbmin / 1000 * bias2.config['VMON']['GAIN'] 
+            vmax = vbmax / 1000 * bias2.config['VMON']['GAIN'] 
+            param2["IFCORR"] = bias2.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param2["NJUNC"], extra=False, debug=True)
+
+        # CALIV: Calibrate I-V data
+        elif command[0] == "CALIV":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tCalibrate I-V offset (both channels)\n")
+                print("\tUseage: CALIV <vbmin> <vbmax>")
+                print("\twhere <vbmin> is the minimum voltage for the shot noise slope, default is 12.5 mV")
+                print("\t      <vbmax> is the maximum voltage for the shot noise slope, default is 15.0 mV\n")
+                continue
+
+            print("\n\tCALIBRATE I-V OFFSET (BOTH CHANNELS):")
+            
+            param1["IOFFSET"], param1["VOFFSET"] = bias1.calibrate_iv_offset(debug=True)
+            param2["IOFFSET"], param2["VOFFSET"] = bias2.calibrate_iv_offset(debug=True)
+
+        # Read out single values (no sweep) -------------------------------- #
+
+        # VMON1: Read voltage monitor
+        elif command[0] == "VMON1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure voltage monitor of channel 1\n")
+                print("\tUseage: VMON1 <average>")
+                print("\twhere <average> is the number of points to average (default is 2000)\n")
+                continue
+
+            # arg 1: number of points to average
+            try:
+                average = int(command[1])
+            except (IndexError, ValueError) as e:
+                average = 2_000
+
+            _ = bias1.read_voltage(average=average, verbose=True)
+
+        # VMON2: Read voltage monitor
+        elif command[0] == "VMON2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure voltage monitor of channel 2\n")
+                print("\tUseage: VMON2 <average>")
+                print("\twhere <average> is the number of points to average (default is 2000)\n")
+                continue
+
+            # arg 1: number of points to average
+            try:
+                average = int(command[1])
+            except (IndexError, ValueError) as e:
+                average = 2_000
+
+            _ = bias2.read_voltage(average=average, verbose=True)
+
+        # IMON1: Read current monitor
+        elif command[0] == "IMON1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure current monitor of channel 1\n")
+                print("\tUseage: IMON1 <average>")
+                print("\twhere <average> is the number of points to average (default is 2000)\n")
+                continue
+
+            # arg 1: number of points to average
+            try:
+                average = int(command[1])
+            except (IndexError, ValueError) as e:
+                average = 2_000
+
+            _ = bias1.read_current(average=average, verbose=True)
+
+        # IMON2: Read current monitor
+        elif command[0] == "IMON2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure current monitor of channel 2\n")
+                print("\tUseage: IMON2 <average>")
+                print("\twhere <average> is the number of points to average (default is 2000)\n")
+                continue
+
+            # arg 1: number of points to average
+            try:
+                average = int(command[1])
+            except (IndexError, ValueError) as e:
+                average = 2_000
+
+            _ = bias2.read_current(average=average, verbose=True)
+
+        # PIF1: Read IF power
+        elif command[0] == "PIF1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure IF power of channel 1\n")
+                print("\tUseage: PIF1 <average>")
+                print("\twhere <average> is the number of points to average (default is 2000)\n")
+                continue
+
+            # arg 1: number of points to average
+            try:
+                average = int(command[1])
+            except (IndexError, ValueError) as e:
+                average = 2_000
+
+            _ = bias1.read_ifpower(average=average, verbose=True)
+
+        # PIF2: Read IF power
+        elif command[0] == "PIF2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure IF power of channel 2\n")
+                print("\tUseage: PIF2 <average>")
+                print("\twhere <average> is the number of points to average (default is 2000)\n")
+                continue
+
+            # arg 1: number of points to average
+            try:
+                average = int(command[1])
+            except (IndexError, ValueError) as e:
+                average = 2_000
+
+            _ = bias2.read_ifpower(average=average, verbose=True)
+
+        # READ: read monitors continuously
+        elif command[0] == "READ":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure voltage, current, IF power continuously\n")
+                print("\tUseage: READ <average>")
+                print("\twhere <average> is the number of points to average (default is 2000)\n")
+                continue
+
+            try:
+                average = int(command[1])
+            except (IndexError, ValueError) as e:
+                average = 1000
+
+            print("\n\tVoltage (ch1)\tVoltage (ch2)\tCurrent (ch1)\tCurrent (ch2)\tIF power (ch1)\tIF power (ch2)\n")
+            try:
+                while True:
+                    vmon_mv1, imon_ua1, ifpower_k1 = bias1.read_all(average=average)
+                    vmon_mv2, imon_ua2, ifpower_k2 = bias2.read_all(average=average)
+                    print(f"\t{vmon_mv1:7.3f} mV\t{vmon_mv2:7.3f} mV\t{imon_ua1:7.2f} uA\t{imon_ua2:7.2f} uA\t{ifpower_k1:7.4f} K\t{ifpower_k2:7.4f} K")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+        # Sweep control voltage -------------------------------------------- #
+
+        # SWEEP: Sweep control voltage (triangle wave)
+        elif command[0] == "SWEEP" or command[0] == "S":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSweep control voltage (triangular wave)\n")
+                print("\tUseage: SWEEP")
+                print("\t        S\n")
+                continue
+
+            print("\n\tSWEEP CONTROL VOLTAGES")
+            bias1.sweep_control_voltage(vmin=param1['VMIN'],
+                                        vmax=param1['VMAX'],
+                                        sweep_period=param1['PERIOD'],
+                                        npts=param1['NPTS'],
+                                        vlimit=param1['VLIMIT'])
+            bias2.sweep_control_voltage(vmin=param2['VMIN'],
+                                        vmax=param2['VMAX'],
+                                        sweep_period=param2['PERIOD'],
+                                        npts=param2['NPTS'],
+                                        vlimit=param2['VLIMIT'])
+            bias1.start_iv_monitor_scan(sweep_period=param1['PERIOD'],
+                                        npts=param1['NPTS'])
+            bias2.start_iv_monitor_scan(sweep_period=param2['PERIOD'],
+                                        npts=param2['NPTS'])
+            print("")
+
+        # Measure IV / IF data --------------------------------------------- #
+
+        # TUNE: Plot I-V curve for tuning purposes
+        elif command[0] == "TUNE" or command[0] == "T":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tPlot IV/IF curves for tuning purposes\n")
+                print("\tUseage: TUNE")
+                print("\t        T\n")
+                continue
+
+            print("\n\tTUNE LO POWER:")
+            print("\n\t** Remember to wipe vacuum window **")
+
+            # Quick first pass (to get limits)
+            bias1.sweep_control_voltage(vmin=param1['VMIN'],
+                                        vmax=param1['VMAX'],
+                                        sweep_period=1,
+                                        npts=1000,
+                                        vlimit=param1['VLIMIT'])
+            bias2.sweep_control_voltage(vmin=param2['VMIN'],
+                                        vmax=param2['VMAX'],
+                                        sweep_period=1,
+                                        npts=1000,
+                                        vlimit=param2['VLIMIT'])
+            bias1.start_iv_monitor_scan(npts=1000, sweep_period=1)
+            bias2.start_iv_monitor_scan(npts=1000, sweep_period=1)
+            time.sleep(2)
+            print("")
+
+            voltage1, current1, ifpower1 = bias1.read_iv_curve_buffer()
+            voltage2, current2, ifpower2 = bias2.read_iv_curve_buffer()
+
+            # Initialize figure
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+            ax1.set_xlabel("Bias Voltage (mV)")
+            ax2.set_xlabel("Bias Voltage (mV)")
+            ax1.set_ylabel("Bias Current (uV)")
+            ax2.set_ylabel("IF Power (au)")
+            linea1, = ax1.plot([0], [0], 'bo-', ms=3, label="Channel 1")
+            linea2, = ax1.plot([0], [0], 'ro-', ms=3, label="Channel 2")
+            lineb1, = ax2.plot([0], [0], 'bo-', ms=3, label="Channel 1")
+            lineb2, = ax2.plot([0], [0], 'ro-', ms=3, label="Channel 2")
+            ax1.set_xlim([min(voltage1.min(), voltage2.min()), max(voltage1.max(), voltage2.max())])
+            ax2.set_xlim([min(voltage1.min(), voltage2.min()), max(voltage1.max(), voltage2.max())])
+            ax1.set_ylim([min(current1.min(), current2.min()), max(current1.max(), current2.max())])
+            ax2.set_ylim([0, max(ifpower1.max(), ifpower2) * 2])
+            fig.canvas.draw()
+            plt.show()
+
+            while True:
+                try:
+                    results1 = bias1.measure_ivif(average=64, vmin=param1['VMIN'], vmax=param1['VMAX'], npts=20, vlimit=param1['VLIMIT'], verbose=False)
+                    results2 = bias2.measure_ivif(average=64, vmin=param2['VMIN'], vmax=param2['VMAX'], npts=20, vlimit=param2['VLIMIT'], verbose=False)
+                    if results1 is None or results2 is None:
+                        break
+                    v_results1, _, i_results1, _, p_results1, _ = results1
+                    v_results2, _, i_results2, _, p_results2, _ = results2
+
+                    linea1.set_data(v_results1, i_results1)
+                    linea2.set_data(v_results2, i_results2)
+                    lineb1.set_data(v_results1, p_results1)
+                    lineb2.set_data(v_results2, p_results2)
+                    fig.canvas.draw()
+                    plt.pause(0.0001)
+                    fig.canvas.flush_events()
+
+                except KeyboardInterrupt:
+                    print("")
+                    plt.close('all')
+                    break
+
+        # MONITOR: Real time plot of I-V curve
+        elif command[0] == "MONITOR" or command[0] == "MON":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tPlot I-V/IF data in real-time (both channels)\n")
+                print("\tUseage: MONITOR <resistance>")
+                print("\t        MON <resistance>")
+                print("\twhere <resistance> will plot a resistance line for reference\n")
+                continue
+
+            print("\n\tMONITOR (BOTH CHANNELS):")
+
+            if len(command) > 1:
+                resistance = float(command[1])
+            else:
+                resistance = None
+
+            # Start I-V bias sweeps
+            bias1.sweep_control_voltage(param1['VMIN'], param1['VMAX'], npts=param1['NPTS'], sweep_period=param1['PERIOD'], vlimit=param1['VLIMIT'])
+            bias2.sweep_control_voltage(param2['VMIN'], param2['VMAX'], npts=param2['NPTS'], sweep_period=param2['PERIOD'], vlimit=param2['VLIMIT'])
+            bias1.start_iv_monitor_scan(npts=param1['NPTS'], sweep_period=param1['PERIOD'])
+            bias2.start_iv_monitor_scan(npts=param2['NPTS'], sweep_period=param2['PERIOD'])
+            time.sleep(param1['PERIOD'] * 2)
+            print("")
+
+            # Read I-V curve
+            voltage1, current1, ifpower1 = bias1.read_iv_curve_buffer()
+            voltage2, current2, ifpower2 = bias2.read_iv_curve_buffer()
+
+            # Constant resistance line
+            if resistance is not None:
+                irmin = voltage1.min() / resistance * 1e3
+                irmax = voltage1.max() / resistance * 1e3
+
+            # Create figure
+            plt.ion()
+            fig, ax1 = plt.subplots(figsize=(6, 5))
+            ax1.set_xlabel("Voltage (mV)")
+            ax1.set_ylabel("Current (uA)")
+            ax1.set_xlim([voltage1.min(), voltage1.max()])
+            if resistance is None:
+                ax1.set_ylim([current1.min(), current1.max()])
+            else:
+                ax1.set_ylim([irmin, irmax])
+                line0, = ax1.plot([voltage1.min(), voltage1.max()], [irmin, irmax], 'r', label=f"{resistance:.0f} ohms")
+            line1, = ax1.plot([0], [0], 'b.', ms=1, label="Channel 1")
+            line2, = ax1.plot([0], [0], 'r.', ms=1, label="Channel 2")
+            ax1.legend() 
+            fig.canvas.draw()
+            plt.show()
+
+            while True:
+                try:
+                    # Restart scans
+                    bias1.sweep_control_voltage(param1['VMIN'], param1['VMAX'], npts=param1['NPTS'], sweep_period=param1['PERIOD'], vlimit=param1['VLIMIT'], verbose=False)
+                    bias2.sweep_control_voltage(param2['VMIN'], param2['VMAX'], npts=param2['NPTS'], sweep_period=param2['PERIOD'], vlimit=param2['VLIMIT'], verbose=False)
+                    bias1.start_iv_monitor_scan(npts=param1['NPTS'], sweep_period=param1['PERIOD'], verbose=False)
+                    bias2.start_iv_monitor_scan(npts=param2['NPTS'], sweep_period=param2['PERIOD'], verbose=False)
+                    time.sleep(param1['PERIOD'])
+
+                    # Read I-V curve
+                    voltage1, current1, ifpower1 = bias1.read_iv_curve_buffer()
+                    voltage2, current2, ifpower2 = bias2.read_iv_curve_buffer()
+
+                    # Draw I-V curve
+                    line1.set_data(voltage1, current1)
+                    line2.set_data(voltage2, current2)
+                    fig.canvas.draw()
+                    plt.pause(0.0001)
+                    fig.canvas.flush_events()
+
+                except KeyboardInterrupt:
+                    plt.close('all')
+                    bias1.set_control_voltage(0)
+                    bias2.set_control_voltage(0)
+                    print("\n\tControl voltage set to 0 V.\n")
+                    break
+
+        # MONITOR1: Real time plot of I-V curve
+        elif command[0] == "MONITOR1" or command[0] == "MON1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tPlot I-V/IF data in real-time (channel 1)\n")
+                print("\tUseage: MONITOR1 <resistance>")
+                print("\t        MON1 <resistance>")
+                print("\twhere <resistance> will plot a resistance line for reference\n")
+                continue
+
+            print("\n\tMONITOR (CHANNEL 1):")
+
+            if len(command) > 1:
+                resistance = float(command[1])
+            else:
+                resistance = None
+
+            bias1.monitor(npts=param1['NPTS'], period=param1['PERIOD'], vmin=param1['VMIN'], vmax=param1['VMAX'], vlimit=param1['VLIMIT'], resistance=resistance)
+
+        # MONITOR2: Real time plot of I-V curve
+        elif command[0] == "MONITOR2" or command[0] == "MON2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tPlot I-V/IF data in real-time (channel 2)\n")
+                print("\tUseage: MONITOR2 <resistance>")
+                print("\t        MON2 <resistance>")
+                print("\twhere <resistance> will plot a resistance line for reference\n")
+                continue
+
+            print("\n\tMONITOR (CHANNEL 2):")
+
+            if len(command) > 1:
+                resistance = float(command[1])
+            else:
+                resistance = None
+
+            bias2.monitor(npts=param2['NPTS'], period=param2['PERIOD'], vmin=param2['VMIN'], vmax=param2['VMAX'], vlimit=param2['VLIMIT'], resistance=resistance)
+
+        # MEASURE: Measure IV / IF curve
+        elif command[0] == "MEASURE" or command[0] == "M":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure I-V/IF curves (both channels)\n")
+                print("\tUseage: MEASURE <npts> <average> <sleeptime>")
+                print("\t        M <npts> <average> <sleeptime>")
+                print("\twhere <npts> is the number of points (default 1001)")
+                print("\t      <average> is the averaging (default 64)")
+                print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
+                continue
+
+            print("\n\tMEASURE I-V + IF CURVE (BOTH CHANNELS):")
+
+            # arg 1: number of points
+            if len(command) > 1:
+                npts = int(command[1])
+            else:
+                npts = 1001
+
+            # arg 2: averaging
+            if len(command) > 2:
+                average = int(command[2])
+            else:
+                average = 64
+
+            # arg 3: sleep time
+            if len(command) > 3:
+                sleep_time = float(command[3])
+            else:
+                sleep_time = 0.1
+
+            # Parameters
+            vmin, vmax = param1["VMIN"], param1["VMAX"]
+            vbmin = vmin * 1000 / bias1.config['VMON']['GAIN']
+            vbmax = vmax * 1000 / bias1.config['VMON']['GAIN']
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            print(f"\n\tControl voltage sweep: {vmin:5.1f} to {vmax:5.1f} V")
+            print(f"  \tBias voltage sweep:    {vbmin:5.1f} to {vbmax:5.1f} mV\n")
+
+            # Sweep bias voltage and measure voltage / current / IF power
+            try:
+                voltage1, voltage2 = np.zeros(npts), np.zeros(npts)
+                current1, current2 = np.zeros(npts), np.zeros(npts)
+                ifpower1, ifpower2 = np.zeros(npts), np.zeros(npts)
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias1.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
+                    bias2.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
+                    time.sleep(sleep_time)
+                    voltage1[i], current1[i], ifpower1[i] = bias1.read_all(average=average)
+                    voltage2[i], current2[i], ifpower2[i] = bias2.read_all(average=average)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            # Sort by voltage
+            idx = voltage1.argsort()
+            voltage1, current1, ifpower1 = voltage1[idx], current1[idx], ifpower1[idx]
+            idx = voltage2.argsort()
+            voltage2, current2, ifpower2 = voltage2[idx], current2[idx], ifpower2[idx]
+
+            # Find intercept, normal resistance and IF noise
+            print(f"\n\tRange for linear fit:\t{param1['VBMIN_LINEAR']:5.1f} to {param1['VBMAX_LINEAR']:5.1f} mV")
+            if param1['FREQ'] == 0:
+                mask1 = (param1['VBMIN_LINEAR'] <= voltage1) & (voltage1 <= param1['VBMAX_LINEAR'])
+                mask2 = (param2['VBMIN_LINEAR'] <= voltage2) & (voltage2 <= param2['VBMAX_LINEAR'])
+                try:
+                    pnormal1 = np.polyfit(voltage1[mask1], current1[mask1], 1)
+                    pnormal2 = np.polyfit(voltage2[mask2], current2[mask2], 1)
+                    v_intercept1 = -pnormal1[1] / pnormal1[0]
+                    v_intercept2 = -pnormal2[1] / pnormal2[0]
+                    print(f"\n\tIntercept:\t\t{v_intercept1:.3f} mV (channel 1)")
+                    print(f"\n\tIntercept:\t\t{v_intercept2:.3f} mV (channel 2)")
+                    rnormal1 = 1000 / pnormal1[0]
+                    rnormal2 = 1000 / pnormal2[0]
+                    print(f"  \tNormal resistance:\t{rnormal1:.1f} ohms (channel 1)")
+                    print(f"  \tNormal resistance:\t{rnormal2:.1f} ohms (channel 2)")
+                    pifnoise1 = np.polyfit(voltage1[mask1], ifpower1[mask1], 1)
+                    pifnoise2 = np.polyfit(voltage2[mask2], ifpower2[mask2], 1)
+                    if_noise1 = np.polyval(pifnoise1, v_intercept1)
+                    if_noise2 = np.polyval(pifnoise2, v_intercept2)
+                    gamma1 = (50 - rnormal1) / (50 + rnormal1)
+                    gamma2 = (50 - rnormal2) / (50 + rnormal2)
+                    gmismatch1 = 1 - np.abs(gamma1) ** 2
+                    gmismatch2 = 1 - np.abs(gamma2) ** 2
+                    if_noise_corr1 = (if_noise1 - 1.3) * gmismatch1
+                    if_noise_corr2 = (if_noise2 - 1.3) * gmismatch2
+                    print(f"  \tIF noise:\t\t{if_noise1:.1f} K (channel 1)")
+                    print(f"  \tIF noise:\t\t{if_noise2:.1f} K (channel 2)")
+                    print(f"  \tIF noise:\t\t{if_noise_corr1:.1f} K after correction (channel 1)")
+                    print(f"  \tIF noise:\t\t{if_noise_corr2:.1f} K after correction (channel 2)")
+                    print(f"  \tMean IF power:\t\t{np.mean(ifpower1):.1f} K (channel 1)")
+                    print(f"  \tMean IF power:\t\t{np.mean(ifpower2):.1f} K (channel 2)\n")
+                except:
+                    pnormal1 = None
+                    pnormal2 = None
+                    pifnoise1 = None
+                    pifnoise2 = None
+                    v_intercept1 = None 
+                    v_intercept2 = None 
+                    rnormal1 = None 
+                    rnormal2 = None 
+                    if_noise1 = None
+                    if_noise2 = None
+                    if_noise_corr1 = None
+                    if_noise_corr2 = None
+                    pass
+
+            # Plot I-V curve
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            ax1.plot(voltage1, current1, 'b-', label='I-V curve (ch. 1)')
+            ax1.plot(voltage2, current2, 'r-', label='I-V curve (ch. 2)')
+            if vmin == -vmax:
+                ax1.plot(-voltage1, -current1, 'b-', alpha=0.5)
+                ax1.plot(-voltage2, -current2, 'r-', alpha=0.5)
+            if param1['FREQ'] == 0:
+                if pnormal1 is not None and pnormal2 is not None:
+                    ax1.plot(voltage1[voltage1 > 0], np.polyval(pnormal1, voltage1[voltage1 > 0]), 'b-', lw=0.5, label=r"$R_n={:.1f}~\Omega$ (ch. 1)".format(rnormal1))
+                    ax1.plot(voltage2[voltage2 > 0], np.polyval(pnormal2, voltage2[voltage2 > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$ (ch. 2)".format(rnormal2))
+                if v_intercept1 is not None and v_intercept2 is not None:
+                    ax1.plot(v_intercept1, 0, 'b*', ms=10, label="$x$-intercept (ch. 1)")
+                    ax1.plot(v_intercept2, 0, 'r*', ms=10, label="$x$-intercept (ch. 2)")
+            ax1.set_xlabel("Voltage (mV)")
+            ax1.set_ylabel("Current (uA)")
+            ax1.legend(loc=2, frameon=True)
+
+            # Plot IF power
+            ax2.plot(voltage1, ifpower1, 'b-', label='IF power (ch. 1)')
+            ax2.plot(voltage2, ifpower2, 'r-', label='IF power (ch. 2)')
+            if vmin == -vmax:
+                ax2.plot(-voltage1, ifpower1, 'b-', alpha=0.5)
+                ax2.plot(-voltage2, ifpower2, 'r-', alpha=0.5)
+            if param1['FREQ'] == 0:
+                if pifnoise1 is not None:
+                    ax2.plot(voltage1, np.polyval(pifnoise1, voltage1), 'b-', lw=0.5)
+                    ax2.plot(voltage2, np.polyval(pifnoise2, voltage2), 'r-', lw=0.5)
+                    tif_str = r"$T_\mathrm{IF}$"
+                if v_intercept1 is not None and if_noise1 is not None:
+                    ax2.plot(v_intercept1, if_noise1, 'b^', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise1))
+                    ax2.plot(v_intercept2, if_noise2, 'r^', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise2))
+                    tif_str = r"$T_\mathrm{IF}^\prime$"
+                if if_noise_corr1 is not None:
+                    ax2.plot(v_intercept1, if_noise_corr1, 'bv', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr1))
+                    ax2.plot(v_intercept2, if_noise_corr2, 'rv', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr2))
+            ax2.legend(loc=4, frameon=True)
+            ax2.set_ylabel("IF Power (K)")
+            ax2.set_xlabel("Voltage (mV)")
+            ax2.set_ylim(ymin=0)
+            plt.show()
+
+            filename1 = ask_filename(msg="\tFile name (channel 1): ")
+            filename2 = ask_filename(msg="\tFile name (channel 2): ")
+            if filename1 is None:
+                print("\n\tNot any saving data for channel 1.\n")
+            else:
+                # Save data
+                header = "Voltage (mV), Current (uA), IF power (K)"
+                np.savetxt(filename1 + ".dat", np.vstack((voltage1, current1, ifpower1)).T, header=header)
+                # Save metadata
+                with open(filename1 + ".mdat", "w") as fout:
+                    json.dump(param1, fout, indent=4)
+            if filename2 is None:
+                print("\n\tNot any saving data for channel 2.\n")
+            else:
+                # Save data
+                header = "Voltage (mV), Current (uA), IF power (K)"
+                np.savetxt(filename2 + ".dat", np.vstack((voltage2, current2, ifpower2)).T, header=header)
+                # Save metadata
+                with open(filename2 + ".mdat", "w") as fout:
+                    json.dump(param2, fout, indent=4)
+
+        # MEASURE1: Measure IV / IF curve
+        elif command[0] == "MEASURE1" or command[0] == "M1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure I-V/IF curves (channel 1)\n")
+                print("\tUseage: MEASURE1 <npts> <average> <sleeptime>")
+                print("\t        M1 <npts> <average> <sleeptime>")
+                print("\twhere <npts> is the number of points (default 1001)")
+                print("\t      <average> is the averaging (default 64)")
+                print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
+                continue
+
+            print("\n\tMEASURE I-V + IF CURVE (CHANNEL 1):")
+
+            # arg 1: number of points
+            if len(command) > 1:
+                npts = int(command[1])
+            else:
+                npts = 1001
+
+            # arg 2: averaging
+            if len(command) > 2:
+                average = int(command[2])
+            else:
+                average = 64
+
+            # arg 3: sleep time
+            if len(command) > 3:
+                sleep_time = float(command[3])
+            else:
+                sleep_time = 0.1
+
+            # Parameters
+            vmin, vmax = param1["VMIN"], param1["VMAX"]
+            vbmin = vmin * 1000 / bias1.config['VMON']['GAIN']
+            vbmax = vmax * 1000 / bias1.config['VMON']['GAIN']
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            print(f"\n\tControl voltage sweep: {vmin:5.1f} to {vmax:5.1f} V")
+            print(f"  \tBias voltage sweep:    {vbmin:5.1f} to {vbmax:5.1f} mV\n")
+
+            # Sweep bias voltage and measure voltage / current / IF power
+            try:
+                voltage = np.zeros(npts)
+                current = np.zeros(npts)
+                ifpower = np.zeros(npts)
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias1.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
+                    time.sleep(sleep_time)
+                    voltage[i], current[i], ifpower[i] = bias1.read_all(average=average)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            # Sort by voltage
+            idx = voltage.argsort()
+            voltage, current, ifpower = voltage[idx], current[idx], ifpower[idx]
+
+            # Find intercept, normal resistance and IF noise
+            print(f"\n\tRange for linear fit:\t{param1['VBMIN_LINEAR']:5.1f} to {param1['VBMAX_LINEAR']:5.1f} mV")
+            if param1['FREQ'] == 0:
+                mask = (param1['VBMIN_LINEAR'] <= voltage) & (voltage <= param1['VBMAX_LINEAR'])
+                try:
+                    pnormal = np.polyfit(voltage[mask], current[mask], 1)
+                    v_intercept = -pnormal[1] / pnormal[0]
+                    print(f"\n\tIntercept:\t\t{v_intercept:.3f} mV")
+                    rnormal = 1000 / pnormal[0]
+                    print(f"  \tNormal resistance:\t{rnormal:.1f} ohms")
+                    pifnoise = np.polyfit(voltage[mask], ifpower[mask], 1)
+                    if_noise = np.polyval(pifnoise, v_intercept)
+                    gamma = (50 - rnormal) / (50 + rnormal)
+                    gmismatch = 1 - np.abs(gamma) ** 2
+                    if_noise_corr = (if_noise - 1.3) * gmismatch
+                    print(f"  \tIF noise:\t\t{if_noise:.1f} K")
+                    print(f"  \t         \t\t{if_noise_corr:.1f} K (after correction)")
+                    print(f"  \tMean IF power:\t\t{np.mean(ifpower):.1f} K\n")
+                except:
+                    pnormal = None
+                    pifnoise = None
+                    v_intercept = None 
+                    rnormal = None 
+                    if_noise = None
+                    if_noise_corr = None
+                    pass
+
+            # Plot I-V curve
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            ax1.plot(voltage, current, 'k-', label='I-V curve')
+            if vmin == -vmax:
+                ax1.plot(-voltage, -current, 'k-', alpha=0.5)
+            if param1['FREQ'] == 0:
+                if pnormal is not None:
+                    ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$".format(rnormal))
+                if v_intercept is not None:
+                    ax1.plot(v_intercept, 0, 'r*', ms=10, label="$x$-intercept")
+            ax1.set_xlabel("Voltage (mV)")
+            ax1.set_ylabel("Current (uA)")
+            ax1.legend(loc=2, frameon=True)
+
+            # Plot IF power
+            ax2.plot(voltage, ifpower, 'k-', label='IF power')
+            if vmin == -vmax:
+                ax2.plot(-voltage, ifpower, 'k-', alpha=0.5)
+            if param1['FREQ'] == 0:
+                if pifnoise is not None:
+                    ax2.plot(voltage, np.polyval(pifnoise, voltage), 'r-', lw=0.5)
+                    tif_str = r"$T_\mathrm{IF}$"
+                if v_intercept is not None and if_noise is not None:
+                    ax2.plot(v_intercept, if_noise, 'r*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise))
+                    tif_str = r"$T_\mathrm{IF}^\prime$"
+                if if_noise_corr is not None:
+                    ax2.plot(v_intercept, if_noise_corr, 'b*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr))
+            ax2.legend(loc=4, frameon=True)
+            ax2.set_ylabel("IF Power (K)")
+            ax2.set_xlabel("Voltage (mV)")
+            ax2.set_ylim(ymin=0)
+            plt.show()
+
+            filename = ask_filename()
+            if filename is None:
+                print("\n\tNot any saving data.\n")
+            else:
+                # Save data
+                header = "Voltage (mV), Current (uA), IF power (K)"
+                np.savetxt(filename + ".dat", np.vstack((voltage, current, ifpower)).T, header=header)
+                # Save metadata
+                with open(filename + ".mdat", "w") as fout:
+                    json.dump(param1, fout, indent=4)
+
+        # MEASURE2: Measure IV / IF curve
+        elif command[0] == "MEASURE2" or command[0] == "M2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure I-V/IF curves (channel 2)\n")
+                print("\tUseage: MEASURE2 <npts> <average> <sleeptime>")
+                print("\t        M2 <npts> <average> <sleeptime>")
+                print("\twhere <npts> is the number of points (default 1001)")
+                print("\t      <average> is the averaging (default 64)")
+                print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
+                continue
+
+            print("\n\tMEASURE I-V + IF CURVE (CHANNEL 2):")
+
+            # arg 1: number of points
+            if len(command) > 1:
+                npts = int(command[1])
+            else:
+                npts = 1001
+
+            # arg 2: averaging
+            if len(command) > 2:
+                average = int(command[2])
+            else:
+                average = 64
+
+            # arg 3: sleep time
+            if len(command) > 3:
+                sleep_time = float(command[3])
+            else:
+                sleep_time = 0.1
+
+            # Parameters
+            vmin, vmax = param2["VMIN"], param2["VMAX"]
+            vbmin = vmin * 1000 / bias2.config['VMON']['GAIN']
+            vbmax = vmax * 1000 / bias2.config['VMON']['GAIN']
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            print(f"\n\tControl voltage sweep: {vmin:5.1f} to {vmax:5.1f} V")
+            print(f"  \tBias voltage sweep:    {vbmin:5.1f} to {vbmax:5.1f} mV\n")
+
+            # Sweep bias voltage and measure voltage / current / IF power
+            try:
+                voltage = np.zeros(npts)
+                current = np.zeros(npts)
+                ifpower = np.zeros(npts)
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias2.set_control_voltage(_vctrl, vlimit=param2['VLIMIT'])
+                    time.sleep(sleep_time)
+                    voltage[i], current[i], ifpower[i] = bias2.read_all(average=average)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            # Sort by voltage
+            idx = voltage.argsort()
+            voltage, current, ifpower = voltage[idx], current[idx], ifpower[idx]
+
+            # Find intercept, normal resistance and IF noise
+            print(f"\n\tRange for linear fit:\t{param2['VBMIN_LINEAR']:5.1f} to {param2['VBMAX_LINEAR']:5.1f} mV")
+            if param2['FREQ'] == 0:
+                mask = (param2['VBMIN_LINEAR'] <= voltage) & (voltage <= param2['VBMAX_LINEAR'])
+                try:
+                    pnormal = np.polyfit(voltage[mask], current[mask], 1)
+                    v_intercept = -pnormal[1] / pnormal[0]
+                    print(f"\n\tIntercept:\t\t{v_intercept:.3f} mV")
+                    rnormal = 1000 / pnormal[0]
+                    print(f"  \tNormal resistance:\t{rnormal:.1f} ohms")
+                    pifnoise = np.polyfit(voltage[mask], ifpower[mask], 1)
+                    if_noise = np.polyval(pifnoise, v_intercept)
+                    gamma = (50 - rnormal) / (50 + rnormal)
+                    gmismatch = 1 - np.abs(gamma) ** 2
+                    if_noise_corr = (if_noise - 1.3) * gmismatch
+                    print(f"  \tIF noise:\t\t{if_noise:.1f} K")
+                    print(f"  \t         \t\t{if_noise_corr:.1f} K (after correction)")
+                    print(f"  \tMean IF power:\t\t{np.mean(ifpower):.1f} K\n")
+                except:
+                    pnormal = None
+                    pifnoise = None
+                    v_intercept = None 
+                    rnormal = None 
+                    if_noise = None
+                    if_noise_corr = None
+                    pass
+
+            # Plot I-V curve
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            ax1.plot(voltage, current, 'k-', label='I-V curve')
+            if vmin == -vmax:
+                ax1.plot(-voltage, -current, 'k-', alpha=0.5)
+            if param2['FREQ'] == 0:
+                if pnormal is not None:
+                    ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$".format(rnormal))
+                if v_intercept is not None:
+                    ax1.plot(v_intercept, 0, 'r*', ms=10, label="$x$-intercept")
+            ax1.set_xlabel("Voltage (mV)")
+            ax1.set_ylabel("Current (uA)")
+            ax1.legend(loc=2, frameon=True)
+
+            # Plot IF power
+            ax2.plot(voltage, ifpower, 'k-', label='IF power')
+            if vmin == -vmax:
+                ax2.plot(-voltage, ifpower, 'k-', alpha=0.5)
+            if param2['FREQ'] == 0:
+                if pifnoise is not None:
+                    ax2.plot(voltage, np.polyval(pifnoise, voltage), 'r-', lw=0.5)
+                    tif_str = r"$T_\mathrm{IF}$"
+                if v_intercept is not None and if_noise is not None:
+                    ax2.plot(v_intercept, if_noise, 'r*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise))
+                    tif_str = r"$T_\mathrm{IF}^\prime$"
+                if if_noise_corr is not None:
+                    ax2.plot(v_intercept, if_noise_corr, 'b*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr))
+            ax2.legend(loc=4, frameon=True)
+            ax2.set_ylabel("IF Power (K)")
+            ax2.set_xlabel("Voltage (mV)")
+            ax2.set_ylim(ymin=0)
+            plt.show()
+
+            filename = ask_filename()
+            if filename is None:
+                print("\n\tNot any saving data.\n")
+            else:
+                # Save data
+                header = "Voltage (mV), Current (uA), IF power (K)"
+                np.savetxt(filename + ".dat", np.vstack((voltage, current, ifpower)).T, header=header)
+                # Save metadata
+                with open(filename + ".mdat", "w") as fout:
+                    json.dump(param2, fout, indent=4)
+
+        # YFAC: Measure Y-factor
+        elif command[0] == "YFAC" or command[0] == "Y":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure Y-factor (both channels)\n")
+                print("\tUseage: YFAC <npts> <average> <sleeptime>")
+                print("\t        Y <npts> <average> <sleeptime>")
+                print("\twhere <npts> is the number of points (default 201)")
+                print("\t      <average> is the averaging (default 64)")
+                print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
+                continue
+
+            print("\n\tMEASURE Y-FACTOR (BOTH CHANNELS):")
+
+            # arg 1: number of points
+            if len(command) > 1:
+                npts = int(command[1])
+            else:
+                npts = 201
+
+            # arg 2: averaging
+            if len(command) > 2:
+                average = int(command[2])
+            else:
+                average = 64
+
+            # arg 3: sleep time
+            if len(command) > 3:
+                sleep_time = float(command[3])
+            else:
+                sleep_time = 0.1
+
+            # Parameters
+            vmin, vmax, vlimit = param1["VMIN"], param1["VMAX"], param1["VLIMIT"]
+            vbmin, vbmax = vmin * 1000 / bias1.config['VMON']['GAIN'], vmax * 1000 / bias1.config['VMON']['GAIN']
+            print(f"\n\tControl voltage sweep: {vmin:4.1f} to {vmax:4.1f} V")
+            print(f"  \tBias voltage sweep:    {vbmin:4.1f} to {vbmax:4.1f} mV\n")
+            print(f"\tNumber of points: {npts}")
+            print(f"\tAveraging: {average}")
+            print(f"\tSleep time: {sleep_time:.1f} s\n")
+
+            # Start with hot load
+            bias2.hot_load()
+            time.sleep(1)
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            try:
+                results1 = np.zeros((3, npts))
+                results2 = np.zeros((3, npts))
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias1.set_control_voltage(_vctrl, vlimit=vlimit)
+                    bias2.set_control_voltage(_vctrl, vlimit=vlimit)
+                    time.sleep(sleep_time)
+                    results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load:  ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            # Sort by voltage
+            results1h = results1[:, results1[0, :].argsort()]
+            results2h = results2[:, results2[0, :].argsort()]
+            vh1, ih1, ph1 = results1h
+            vh2, ih2, ph2 = results2h
+
+            # Switch to cold load
+            bias2.cold_load()
+            time.sleep(1)
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            try:
+                results1 = np.zeros((3, npts))
+                results2 = np.zeros((3, npts))
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias1.set_control_voltage(_vctrl, vlimit=vlimit)
+                    bias2.set_control_voltage(_vctrl, vlimit=vlimit)
+                    time.sleep(sleep_time)
+                    results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            # Sort by voltage
+            results1c = results1[:, results1[0, :].argsort()]
+            results2c = results2[:, results2[0, :].argsort()]
+            vc1, ic1, pc1 = results1c
+            vc2, ic2, pc2 = results2c
+
+            # Interpolate to common voltage
+            vb_min = max(vh1.min(), vc1.min(), vh2.min(), vc2.min())
+            vb_max = min(vh1.max(), vc1.max(), vh2.max(), vc2.max())
+            v = np.linspace(vb_min, vb_max, npts)
+            ih1 = np.interp(v, vh1, ih1)
+            ih2 = np.interp(v, vh2, ih2)
+            ic1 = np.interp(v, vc1, ic1)
+            ic2 = np.interp(v, vc2, ic2)
+            ph1 = np.interp(v, vh1, ph1)
+            ph2 = np.interp(v, vh2, ph2)
+            pc1 = np.interp(v, vc1, pc1)
+            pc2 = np.interp(v, vc2, pc2)
+            vh1, vc1 = v.copy(), v.copy()
+            vh2, vc2 = v.copy(), v.copy()
+
+            # Calculate noise temperature
+            yfac1 = ph1 / pc1
+            yfac2 = ph2 / pc2
+            tn1 = (293 - yfac1 * 78) / (yfac1 - 1)
+            tn2 = (293 - yfac2 * 78) / (yfac2 - 1)
+            tn1[tn1 < 0] = 1e10
+            tn2[tn2 < 0] = 1e10
+            gain1 = (ph1 - pc1) / (293 - 78)
+            gain2 = (ph2 - pc2) / (293 - 78)
+
+            # Plot I-V curve
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            ax3 = ax2.twinx()
+            ax1.plot(v, ih1, 'r', label='Hot (channel 1)')
+            ax1.plot(v, ih2, 'r--', label='Hot (channel 2)')
+            ax1.plot(v, ic1, 'b', label='Cold (channel 1)')
+            ax1.plot(v, ic2, 'b--', label='Cold (channel 2)')
+            ax1.set_xlabel("Voltage (mV)")
+            ax1.set_ylabel("Current (uA)")
+            ax1.legend(loc=2, frameon=True)
+
+            # Plot IF power
+            ax2.plot(v, ph1, 'r', label='Hot (channel 1)')
+            ax2.plot(v, ph2, 'r--', label='Hot (channel 2)')
+            ax2.plot(v, pc1, 'b', label='Cold (channel 1)')
+            ax2.plot(v, pc2, 'b--', label='Cold (channel 2)')
+            ax3.plot(v, tn1, 'g', label=r"$T_n$ (channel 1)")
+            ax3.plot(v, tn2, 'g--', label=r"$T_n$ (channel 2)")
+            ax3.set_ylabel("Noise Temperature (K)")
+            ax2.set_ylabel("IF Power (K)")
+            ax2.set_xlabel("Voltage (mV)")
+            ax2.legend(loc=2, frameon=True)
+            ax3.legend(loc=1, frameon=True)
+            ax3.set_ylim([0, 200])
+            ax2.set_ylim(ymin=0)
+            plt.show()
+
+            filename1 = ask_filename(msg="\tFile name (channel 1): ")
+            filename2 = ask_filename(msg="\tFile name (channel 2): ")
+            if filename1 is None:
+                print("\n\tNot any saving data for channel 1.\n")
+            else:
+                # Save data
+                header = "Voltage (mV), Hot Current (uA), Cold Current (uA), Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"
+                np.savetxt(filename1 + ".dat", np.vstack((v, ih1, ic1, ph1, pc1, tn1, gain1)).T, header=header)
+                fig.savefig(filename1 + ".png", dpi=600)
+                # Save metadata
+                with open(filename1 + ".mdat", "w") as fout:
+                    json.dump(param1, fout, indent=4)
+            if filename2 is None:
+                print("\n\tNot any saving data for channel 2.\n")
+            else:
+                # Save data
+                header = "Voltage (mV), Hot Current (uA), Cold Current (uA), Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"
+                np.savetxt(filename2 + ".dat", np.vstack((v, ih2, ic2, ph2, pc2, tn2, gain2)).T, header=header)
+                fig.savefig(filename2 + ".png", dpi=600)
+                # Save metadata
+                with open(filename2 + ".mdat", "w") as fout:
+                    json.dump(param2, fout, indent=4)
+
+#         # MEASUREIF: Measure IF power vs IF frequency
+#         elif command[0] == "MEASUREIF" or command[0] == "MIF":
+
+#             # Print help
+#             if len(command) == 2 and command[1].upper() == "H":
+#                 print("\n\tMeasure IF power versus IF frequency\n")
+#                 print("\tUseage: MEASUREIF <start> <stop> <step> <average>")
+#                 print("\t        MIF <start> <stop> <step> <average>")
+#                 print("\twhere <start> is the start frequency, in units GHz (default 3)")
+#                 print("\t      <stop> is the stop frequency, in units GHz (default 25)")
+#                 print("\t      <step> is the frequency step, in units GHz (default 0.1)")
+#                 print("\t      <average> is the number of points to average (default 100)\n")
+#                 continue
+
+#             print("\n\tMEASURE IF POWER VS IF FREQUENCY:\n")
+
+#             # arg 1: start
+#             if len(command) > 1:
+#                 start = float(command[1])
+#             else:
+#                 start = 3.0
+
+#             # arg 2: stop
+#             if len(command) > 2:
+#                 stop = float(command[2])
+#             else:
+#                 stop = 25.0
+
+#             # arg 3: step
+#             if len(command) > 3:
+#                 step = float(command[3])
+#             else:
+#                 step = 0.1
+
+#             # arg 4: average
+#             if len(command) > 4:
+#                 average = float(command[3])
+#             else:
+#                 average = 100
+
+#             # Measure IF power
+#             try:
+#                 if_frequency = np.arange(start, stop+1e-10, step)
+#                 if_power = np.empty_like(if_frequency)
+#                 if_power_std = np.empty_like(if_frequency)
+#                 for i, _if_freq in np.ndenumerate(if_frequency):
+#                     if_filter.set_frequency(_if_freq)
+#                     time.sleep(0.1)
+#                     if_power_avg, if_power_std[i] = bias.read_ifpower(average=average, stats=True)
+#                     if_power[i] = if_power_avg #- param["IFOFFSET"]
+#                     progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress: ")
+#             except KeyboardInterrupt:
+#                 print("")
+#                 plt.close('all')
+#                 continue
+
+#             # Return to previous IF frequency
+#             if_filter.set_frequency(param['IFFREQ'])
+
+#             # Plot
+#             plt.figure(figsize=(6,5))
+#             plt.plot(if_frequency, if_power)
+#             plt.fill_between(if_frequency, if_power - if_power_std, if_power + if_power_std, alpha=0.2)
+#             plt.xlabel("IF frequency (GHZ)")
+#             plt.ylabel("IF power (K)")
+#             plt.show()
+
+#             # Save data
+#             filename = ask_filename()
+#             if filename is None:
+#                 print("\tNot any saving data.\n")
+#             else:
+#                 # Save data
+#                 header = "IF frequency (GHz), IF power (K), IF std dev (K)"
+#                 np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power, if_power_std)).T, header=header)
+#                 # Save metadata
+#                 with open(filename + ".mdat", "w") as fout:
+#                     json.dump(param, fout, indent=4)
+
+        # CONST1: Set constant bias and monitor V + I
+        elif command[0] == "CONST1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet constant control voltage and measure statistics (channel 1)\n")
+                print("\tUseage: CONST1 <vcontrol> <npts>")
+                print("\twhere <vcontrol> is the control voltage, in units [V]")
+                print("\t      <npts> is the number of sample points (default is 50,000)\n")
+                continue
+
+            print("\n\tCONSTANT CONTROL VOLTAGE (CHANNEL 1):\n")
+
+            # arg 1: control voltage
+            if len(command) > 1:
+                param['VCTRL'] = float(command[1])
+
+            # arg 2: number of sample points
+            if len(command) > 2:
+                npts = int(command[2])
+            else:
+                npts = 50_000
+
+            bias1.noise_statistics(vcontrol=param1['VCTRL'], npts=npts, vlimit=param1["VLIMIT"])
+
+        # CONST2: Set constant bias and monitor V + I
+        elif command[0] == "CONST2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet constant control voltage and measure statistics (channel 2)\n")
+                print("\tUseage: CONST2 <vcontrol> <npts>")
+                print("\twhere <vcontrol> is the control voltage, in units [V]")
+                print("\t      <npts> is the number of sample points (default is 50,000)\n")
+                continue
+
+            print("\n\tCONSTANT CONTROL VOLTAGE (CHANNEL 2):\n")
+
+            # arg 1: control voltage
+            if len(command) > 1:
+                param['VCTRL'] = float(command[1])
+
+            # arg 2: number of sample points
+            if len(command) > 2:
+                npts = int(command[2])
+            else:
+                npts = 50_000
+
+            bias2.noise_statistics(vcontrol=param2['VCTRL'], npts=npts, vlimit=param2["VLIMIT"])
+
+        # RESISTANCE: Fit resistance of I-V curve
+        elif command[0] == "RESISTANCE" or command[0] == "R":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure the resistance of the I-V curve\n")
+                print("\tUseage: RESISTANCE")
+                print("\t        R\n")
+                continue
+
+            voltage, current, _ = bias1.read_iv_curve_buffer()
+            voltage *= 1e-3
+            current *= 1e-6
+            idx = current.argsort()
+            voltage = voltage[idx]
+            current = current[idx]
+            p, cov = np.polyfit(current, voltage, 1, cov=True)
+            perr = np.sqrt(np.diag(cov))
+            print(f"\n\tResistance (channel 1): {p[0]:.2f} +/- {perr[0]:.2f} ohms")
+
+            voltage, current, _ = bias2.read_iv_curve_buffer()
+            voltage *= 1e-3
+            current *= 1e-6
+            idx = current.argsort()
+            voltage = voltage[idx]
+            current = current[idx]
+            p, cov = np.polyfit(current, voltage, 1, cov=True)
+            perr = np.sqrt(np.diag(cov))
+            print(f"\n\tResistance (channel 2): {p[0]:.2f} +/- {perr[0]:.2f} ohms\n")
+
+        # Digital input/output --------------------------------------------- #
+
+        # HOT: move load to hot position
+        elif command[0] == "HOT":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet load to hot position\n")
+                print("\tUseage: HOT\n")
+                continue
+
+            bias2.hot_load()
+
+        # COLD: move load to cold position
+        elif command[0] == "COLD":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet load to cold position\n")
+                print("\tUseage: COLD\n")
+                continue
+
+            bias2.cold_load()
+
+        # Misc functions --------------------------------------------------- #
+
+        # ID: Print DAQ ID nubmer
+        elif command[0] == "ID":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tPrint ID of DAQ unit\n")
+                print("\tUseage: ID\n")
+                continue
+
+            print("\n\tChannel 1: ", bias1)
+            print("\n\tChannel 2: ", bias2, "\n")
+
+        # CLEAR: Clear all plots
+        elif command[0] == "CLEAR" or command[0] == "C":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tClear all plots\n")
+                print("\tUseage: CLEAR")
+                print("\t        C\n")
+                continue
+
+            plt.close("all")
+
+        # EXIT: Stop bias and shutdown
+        elif command[0] == "EXIT" or command[0] == "Q":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tStop bias and shutdown\n")
+                print("\tUseage: EXIT")
+                print("\t        Q\n")
+                continue
+                
+            break
+
+        # Command not recognized...
+        else:
+            print("\n\tCommand not recognized.\n")
+
+except KeyboardInterrupt:
+    print("\nClosing program.")
+
+except EOFError:
+    print("\nClosing program.")
+
+except uldaq.ul_exception.ULException:
+    print("\nConnection lost to device.")
+
+except RuntimeError as e:
+    print(e, "\n")
+    bias1 = None
+    bias2 = None
+
+finally:
+    
+    if bias1 is not None:
+
+        # Save parameters to file (for persistence)
+        with open(param_filename1, 'w') as fout:
+            json.dump(param1, fout, indent=4)
+        print(f"\nMeasurement parameters (channel 1) saved to: {param_filename1}")
+        bias1.save_cal()
+        bias1.save_config()
+
+    if bias2 is not None:
+
+        # Save parameters to file (for persistence)
+        with open(param_filename2, 'w') as fout:
+            json.dump(param2, fout, indent=4)
+        print(f"\nMeasurement parameters (channel 2) saved to: {param_filename2}")
+        bias2.save_cal()
+        bias2.save_config()
+
+    try:
+        print("")
+        bias1.set_control_voltage(0, verbose=True)
+        print("")
+        bias2.set_control_voltage(0, verbose=True)
+        print("")
+        bias1.close()
+        bias2.close()
+    except (NameError, AttributeError, uldaq.ul_exception.ULException) as e:
+        pass

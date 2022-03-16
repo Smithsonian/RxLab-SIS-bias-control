@@ -40,6 +40,7 @@ setup(
         "Topic :: Scientific/Engineering",
     ],
     scripts=[
+        'bin/2sb',
         'bin/sisbias',
         'bin/sisbias-init-cal',
         'bin/sisbias-init-config-v0',
