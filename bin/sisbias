@@ -28,22 +28,50 @@ except OSError:
 
 # Grab arguments
 parser = argparse.ArgumentParser(description="Plot I-V curve and IF power in realtime.")
-parser.add_argument("-c", "--configfile", type=str, help="Configuration file", default=None)
-parser.add_argument("-p", "--paramfile", type=str, help="Parameter file", default=None)
+parser.add_argument("-c", "--channel", type=int, help="2SB channel (1 or 2)", default=None)
+parser.add_argument("--calfile", type=str, help="Calibration file", default=None)
+parser.add_argument("--configfile", type=str, help="Configuration file", default=None)
+parser.add_argument("--paramfile", type=str, help="Parameter file", default=None)
 parser.add_argument("--filteraddr", type=str, help="YIG filter IP address", default=None)  #"192.168.1.15")
 args = parser.parse_args()
 
-# Location of configuration file
-if args.configfile is None:
-    config_filename = user_config_dir("rxlab-sis-bias.config")
+if args.channel is not None:
+    if args.channel == 1:
+        daq_id = "01D87C3C"
+        config_filename = user_config_dir("2sb-mixer1.config")
+        param_filename = user_config_dir("2sb-mixer1.param")
+        cal_filename = user_config_dir("2sb-mixer1.cal")
+    elif args.channel == 2:
+        daq_id = "01D87C1E"
+        config_filename = user_config_dir("2sb-mixer2.config")
+        param_filename = user_config_dir("2sb-mixer2.param")
+        cal_filename = user_config_dir("2sb-mixer2.cal")
+    else: 
+        raise ValueError
+    # if args.filteraddr is None:
+    #     args.filteraddr = "192.168.1.15"
+    args.filteraddr = None
 else:
-    config_filename = args.configfile
+    daq_id = None 
 
-# Read parameter file
-if args.paramfile is None:
-    param_filename = user_config_dir("rxlab-sis-bias.param")
-else:
-    param_filename = args.paramfile
+    # Location of configuration file
+    if args.configfile is None:
+        config_filename = user_config_dir("rxlab-sis-bias.config")
+    else:
+        config_filename = args.configfile
+
+    # Location of parameter file
+    if args.paramfile is None:
+        param_filename = user_config_dir("rxlab-sis-bias.param")
+    else:
+        param_filename = args.paramfile
+
+    # Location of calibration file
+    if args.calfile is None:
+        cal_filename = user_config_dir("rxlab-sis-bias.cal")
+    else: 
+        cal_filename = args.calfile
+
 with open(param_filename) as _fin:
     param = json.load(_fin)
 
@@ -51,7 +79,7 @@ with open(param_filename) as _fin:
 
 try:
     # Initialize bias control
-    bias = SISBias(config_file=config_filename)
+    bias = SISBias(config_file=config_filename, cal_file=cal_filename, daq_id=daq_id)
     
     # Set bias voltage to zero
     param['VCTRL'] = 0
@@ -65,10 +93,10 @@ try:
 
     # Connect to IF filter
     if args.filteraddr is not None:
-        print(f"Connecting to IF YIG filter (IP: {args.filteraddr})...")
+        print(f"Connecting to IF YIG filter (IP: {args.filteraddr})...", end=" ")
         if_filter = YigFilter(args.filteraddr)
         if_filter.set_frequency(param['IFFREQ'])
-        print("done.\n")
+        print("done\n")
     else:
         print("No IF filter specified\n")
         if_filter = None
@@ -762,7 +790,7 @@ try:
             ax2.set_xlabel("Voltage (mV)")
             ax2.legend(loc=2, frameon=True)
             ax3.legend(loc=1, frameon=True)
-            ax3.set_ylim([0, 150])
+            ax3.set_ylim([0, 200])
             ax2.set_ylim(ymin=0)
             plt.show()
 
