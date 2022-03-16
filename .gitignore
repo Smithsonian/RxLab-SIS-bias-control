@@ -1,7 +1,7 @@
 .idea/
 .DS_Store
 
-RxLab_SIS_bias.egg-info/
+*.egg-info/
 __pycache__/
 
 mcc-examples/
