@@ -43,9 +43,11 @@ class SISBias:
 
     """
     
-    def __init__(self, config_file=None, cal_file=None):
+    def __init__(self, config_file=None, cal_file=None, daq_id=None, name=None):
         
-        print("\nSIS BIAS CONTROL")
+        self.name = name
+        self.name_str = f"({self.name})"
+        print(f"\nSIS BIAS CONTROL {self.name_str}")
 
         # Read configuration file
         self.config_file = config_file
@@ -75,24 +77,32 @@ class SISBias:
         devices = get_daq_device_inventory(INTERFACE_TYPE)
         number_of_devices = len(devices)
 
-        # Verify at least one DAQ device is detected
-        if number_of_devices == 0:
-            raise RuntimeError('Error: No DAQ devices found')
-            
-        # Print all available DAQ devices
-        print(f'\nFound {number_of_devices} DAQ device(s):')
-        for i in range(number_of_devices):
-            print(f'  [{i}] {devices[i].product_name} ({devices[i].unique_id})')
+        if daq_id is None:
+            # Verify at least one DAQ device is detected
+            if number_of_devices == 0:
+                raise RuntimeError('Error: No DAQ devices found')
                 
-        # Choose DAQ device
-        if number_of_devices == 1:
-            descriptor_index = 0
+            # Print all available DAQ devices
+            print(f'\nFound {number_of_devices} DAQ device(s):')
+            for i in range(number_of_devices):
+                print(f'  [{i}] {devices[i].product_name} ({devices[i].unique_id})')
+                    
+            # Choose DAQ device
+            if number_of_devices == 1:
+                descriptor_index = 0
+            else:
+                msg = f'\nPlease select a DAQ device (between 0 and {number_of_devices-1}): '
+                descriptor_index = input(msg)
+                descriptor_index = int(descriptor_index)
+                if descriptor_index not in range(number_of_devices):
+                    raise RuntimeError('Error: Invalid descriptor index')
         else:
-            msg = f'\nPlease select a DAQ device (between 0 and {number_of_devices-1}): '
-            descriptor_index = input(msg)
-            descriptor_index = int(descriptor_index)
-            if descriptor_index not in range(number_of_devices):
-                raise RuntimeError('Error: Invalid descriptor index')
+            id_list = [item.unique_id for item in devices]
+            try:
+                descriptor_index = id_list.index(daq_id)
+            except ValueError:
+                print("Specified DAQ is not found.")
+                raise ValueError
             
         # Create the DAQ device object
         self.daq_device = DaqDevice(devices[descriptor_index])
@@ -120,9 +130,9 @@ class SISBias:
         # Establish a connection to the device.
         self.desc = self.daq_device.get_descriptor()
         self.daq_name = "{} ({})".format(self.desc.dev_string, self.desc.unique_id)
-        print(f'\nConnecting to {self.daq_name} ... ', end=" ")
+        print(f'\n\tConnecting to {self.daq_name}... ', end=" ")
         self.daq_device.connect(connection_code=0)
-        print("done\n")
+        print("done")
         
         # Initialize scan status
         self._ao_scan_status, self._ao_transfer_status = self.ao_device.get_scan_status()
@@ -1086,7 +1096,7 @@ class SISBias:
         # Save parameters to file (for persistence)
         with open(cal_filename, 'w') as fout:
             json.dump(self.cal, fout, indent=4)
-        print(f"\nCalibration parameters saved to: {cal_filename}")
+        print(f"\nCalibration parameters {self.name_str} saved to: {cal_filename}")
 
     def save_config(self, config_filename=None):
         """Save configuration parameters to file.
@@ -1102,14 +1112,14 @@ class SISBias:
         # Save parameters to file (for persistence)
         with open(config_filename, 'w') as fout:
             json.dump(self.config, fout, indent=4)
-        print(f"\nConfiguration parameters saved to: {config_filename}")
+        print(f"\nConfiguration parameters {self.name_str} saved to: {config_filename}")
 
     # Stop --------------------------------------------------------------- ###
     
     def close(self):
         """Stop DAQ device and close all connections."""
 
-        print("\nClosing connection to DAQ device ... ", end='')
+        print(f"Closing connection to DAQ device {self.name_str} ... ", end='')
 
         try:
             if self.daq_device:
