@@ -9,25 +9,27 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-p", "--paramfile", type=str, help="Param file", default=None)
+parser.add_argument("-n", "--njunc", type=int, help="Number of SIS junctions in series", default=3)
 args = parser.parse_args()
 
 # Default measurement parameters
 params = dict(
     # General info
-    DEVICE="X",      # device number
-    NJUNC=3,         # number of series SIS junctions
+    DEVICE="XXXXX",             # device id number
+    NJUNC=args.njunc,           # number of series SIS junctions
     # Voltage sweep
-    VMIN=-3,         # control voltage sweep, minimum value [V]
-    VMAX=3,          # control voltage sweep, maximum value [V]
-    PERIOD=0.2,      # control voltage sweep, period [s]
-    NPTS=1000,       # control voltage sweep, number of points
-    VLIMIT=4,        # absolute maximum control voltage
-    # Misc
-    FREQ=0,          # LO frequency [GHz]
-    IFFREQ=10,       # IF frequency [GHz]
-    ICOIL=0,         # Coil current [mA]
-    VBMIN_LINEAR=12, # minimum voltage for linear fit
-    VBMAX_LINEAR=15, # maximum voltage for linear fit
+    VMIN=-2,                    # control voltage sweep, minimum value [V]
+    VMAX=2,                     # control voltage sweep, maximum value [V]
+    PERIOD=0.2,                 # control voltage sweep, period [s]
+    NPTS=1000,                  # control voltage sweep, number of points
+    VLIMIT=4,                   # absolute maximum control voltage
+    # Misc info
+    FREQ=0,                     # LO frequency [GHz]
+    IFFREQ=10,                  # IF frequency [GHz] (if using YIG filter)
+    ICOIL=0,                    # Coil current [mA]
+    VBMIN_LINEAR=4*args.njunc,  # minimum voltage for linear fit
+    VBMAX_LINEAR=5*args.njunc,  # maximum voltage for linear fit
+    VCTRL=0,                    # control voltage (output from DAQ)
 )
 
 # Location of param file
