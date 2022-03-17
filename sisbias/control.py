@@ -637,9 +637,14 @@ class SISBias:
         """
 
         # Measure I-V curve
-        data = self.measure_ivif(npts=npts, average=average, vmin=vmin,
-                                 vmax=vmax, vlimit=5, sleep_time=0.1,
-                                 stats=False, calibrate=False, verbose=True)
+        try:
+            data = self.measure_ivif(npts=npts, average=average, vmin=vmin,
+                                     vmax=vmax, vlimit=5, sleep_time=0.1,
+                                     stats=False, calibrate=False, verbose=True)
+        except KeyboardInterrupt:
+            print("")
+            plt.close('all')
+            return
         voltage, current = data[0, :], data[1, :]
 
         # Offset model
@@ -676,6 +681,8 @@ class SISBias:
         self.cal['IOFFSET'] = ioffset
 
         if debug:
+            plt.figure(figsize=(6,5))
+            plt.title(self.name_str[1:-1])
             # I-V curve
             v1, i1 = voltage - voffset, current - ioffset
             # Flipped I-V curve
@@ -693,11 +700,12 @@ class SISBias:
             plt.xlabel("Bias voltage (mV)")
             plt.ylabel("Current (uA)")
             plt.legend()
+            plt.tight_layout()
             plt.show()
 
         return self.cal['VOFFSET'], self.cal['IOFFSET']
 
-    def calibrate_if_offset(self, vcontrol=0.2, average=10_000, verbose=True):
+    def calibrate_if_offset(self, vcontrol=0.2, average=10_000, verbose=True, wait1=True, wait2=True):
         """Calibrate IF power offset.
 
         Args:
@@ -712,14 +720,14 @@ class SISBias:
         """
 
         # Calculate IF power offset
-        _ = input("\n\tTurn warm LNA off. Press enter when ready.")
+        if wait1:
+            _ = input("\n\tTurn warm LNA off. Press enter when ready.")
         self.set_control_voltage(-vcontrol)
         time.sleep(0.2)
         if_offset1 = self.read_ifpower(average=average, calibrate=False)
         self.set_control_voltage(vcontrol)
         time.sleep(0.2)
         if_offset2 = self.read_ifpower(average=average, calibrate=False)
-        _ = input("\n\tTurn warm LNA back on. Press enter when ready.")
         new_ifoffset = (if_offset1 + if_offset2) / 2
         old_ifoffset = self.cal['IFOFFSET']
         self.cal['IFOFFSET'] = new_ifoffset
@@ -728,6 +736,8 @@ class SISBias:
             print(f"\n\tOld IF offset:  {old_ifoffset:7.4f} AU")
             print(f"  \tNew IF offset:  {new_ifoffset:7.4f} AU")
             print(f"  \t-> change:      {change:4.1f} %\n")
+        if wait2:
+            _ = input("\tTurn warm LNA back on. Press enter when ready.")
 
         return self.cal['IFOFFSET']
 
@@ -755,7 +765,7 @@ class SISBias:
         vsis = np.zeros(npts)
         pif = np.zeros(npts)
         for i, _v in np.ndenumerate(vsweep):
-            progress_bar(i[0]+1, npts, prefix="\tMeasure shot noise: ")
+            progress_bar(i[0]+1, npts, prefix="\tMeasuring shot noise: ")
             self.set_control_voltage(_v)
             time.sleep(sleep_time)
             vsis[i] = self.read_voltage(average=average)
@@ -776,6 +786,7 @@ class SISBias:
 
         if debug:
             fig, ax1 = plt.subplots(figsize=(6, 5))
+            plt.title(self.name_str[1:-1])
             ax1.plot(vsis, pif, 'ko-')
             ax1.plot(vsis, np.polyval(pshot, vsis) * au2k, 'r--')
             ax1.set_xlabel("Bias voltage (mV)")
