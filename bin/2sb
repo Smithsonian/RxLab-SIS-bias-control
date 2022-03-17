@@ -192,25 +192,27 @@ try:
             else:
                 print(f"\n\tLO frequency: {param1['FREQ']:.1f} GHz\n")
 
-#         # IFFREQ: Set IF frequency
-#         elif command[0] == "IFFREQ" or command[0] == "IF":
+        # IFFREQ: Set IF frequency
+        elif command[0] == "IFFREQ" or command[0] == "IF":
 
-#             # Print help
-#             if len(command) == 2 and command[1].upper() == "H":
-#                 print("\n\tSet IF frequency\n")
-#                 print("\tUseage: IFFREQ <freq>")
-#                 print("\t        IF <freq>")
-#                 print("\twhere <freq> is the frequency in units [GHz]\n")
-#                 continue
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet IF frequency\n")
+                print("\tUseage: IFFREQ <freq>")
+                print("\t        IF <freq>")
+                print("\twhere <freq> is the frequency in units [GHz]\n")
+                continue
 
-#             if len(command) > 1:
-#                 try:
-#                     param['IFFREQ'] = float(command[1])
-#                     if_filter.set_frequency(param['IFFREQ'])
-#                 except ValueError:
-#                     print("\n\tError: Frequency must be a float.\n")
-#             else:
-#                 print(f"\n\tIF frequency: {param['IFFREQ']:.3f}\n")
+            if len(command) > 1:
+                try:
+                    if_freq = float(command[1])
+                    param1['IFFREQ'] = if_freq
+                    param2['IFFREQ'] = if_freq
+                    if_filter.set_frequency(if_freq)
+                except ValueError:
+                    print("\n\tError: Frequency must be a float.\n")
+            else:
+                print(f"\n\tIF frequency: {param1['IFFREQ']:.3f}\n")
 
         # VCTRL1: Set control voltage (constant) of channel 1
         elif command[0] == "V1" or command[0] == "VCTRL1":
@@ -280,7 +282,7 @@ try:
             try:
                 iterations = int(command[2])
             except (IndexError, ValueError) as e:
-                iterations = 3
+                iterations = 1
             
             if vbias is not None:
                 print(f"\n\tBias target:   {vbias:6.2f} mV\n")
@@ -364,7 +366,7 @@ try:
 
         # Calibration ------------------------------------------------------ #
 
-        # CALIF1: Calibrate IF power (channel 1)
+        # CALIF: Calibrate IF power (channel 1)
         elif command[0] == "CALIF":
 
             # Print help
@@ -1337,84 +1339,84 @@ try:
                 with open(filename2 + ".mdat", "w") as fout:
                     json.dump(param2, fout, indent=4)
 
-#         # MEASUREIF: Measure IF power vs IF frequency
-#         elif command[0] == "MEASUREIF" or command[0] == "MIF":
+        # MEASUREIF: Measure IF power vs IF frequency
+        elif command[0] == "MEASUREIF" or command[0] == "MIF":
 
-#             # Print help
-#             if len(command) == 2 and command[1].upper() == "H":
-#                 print("\n\tMeasure IF power versus IF frequency\n")
-#                 print("\tUseage: MEASUREIF <start> <stop> <step> <average>")
-#                 print("\t        MIF <start> <stop> <step> <average>")
-#                 print("\twhere <start> is the start frequency, in units GHz (default 3)")
-#                 print("\t      <stop> is the stop frequency, in units GHz (default 25)")
-#                 print("\t      <step> is the frequency step, in units GHz (default 0.1)")
-#                 print("\t      <average> is the number of points to average (default 100)\n")
-#                 continue
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure IF power versus IF frequency\n")
+                print("\tUseage: MEASUREIF <start> <stop> <step> <average>")
+                print("\t        MIF <start> <stop> <step> <average>")
+                print("\twhere <start> is the start frequency, in units GHz (default 3)")
+                print("\t      <stop> is the stop frequency, in units GHz (default 25)")
+                print("\t      <step> is the frequency step, in units GHz (default 0.1)")
+                print("\t      <average> is the number of points to average (default 100)\n")
+                continue
 
-#             print("\n\tMEASURE IF POWER VS IF FREQUENCY:\n")
+            print("\n\tMEASURE IF POWER VS IF FREQUENCY:\n")
 
-#             # arg 1: start
-#             if len(command) > 1:
-#                 start = float(command[1])
-#             else:
-#                 start = 3.0
+            # arg 1: start
+            if len(command) > 1:
+                start = float(command[1])
+            else:
+                start = 3.0
 
-#             # arg 2: stop
-#             if len(command) > 2:
-#                 stop = float(command[2])
-#             else:
-#                 stop = 25.0
+            # arg 2: stop
+            if len(command) > 2:
+                stop = float(command[2])
+            else:
+                stop = 25.0
 
-#             # arg 3: step
-#             if len(command) > 3:
-#                 step = float(command[3])
-#             else:
-#                 step = 0.1
+            # arg 3: step
+            if len(command) > 3:
+                step = float(command[3])
+            else:
+                step = 0.1
 
-#             # arg 4: average
-#             if len(command) > 4:
-#                 average = float(command[3])
-#             else:
-#                 average = 100
+            # arg 4: average
+            if len(command) > 4:
+                average = float(command[3])
+            else:
+                average = 100
 
-#             # Measure IF power
-#             try:
-#                 if_frequency = np.arange(start, stop+1e-10, step)
-#                 if_power = np.empty_like(if_frequency)
-#                 if_power_std = np.empty_like(if_frequency)
-#                 for i, _if_freq in np.ndenumerate(if_frequency):
-#                     if_filter.set_frequency(_if_freq)
-#                     time.sleep(0.1)
-#                     if_power_avg, if_power_std[i] = bias.read_ifpower(average=average, stats=True)
-#                     if_power[i] = if_power_avg #- param["IFOFFSET"]
-#                     progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress: ")
-#             except KeyboardInterrupt:
-#                 print("")
-#                 plt.close('all')
-#                 continue
+            # Measure IF power
+            try:
+                if_frequency = np.arange(start, stop+1e-10, step)
+                if_power = np.empty_like(if_frequency)
+                if_power_std = np.empty_like(if_frequency)
+                for i, _if_freq in np.ndenumerate(if_frequency):
+                    if_filter.set_frequency(_if_freq)
+                    time.sleep(0.1)
+                    if_power_avg, if_power_std[i] = bias.read_ifpower(average=average, stats=True)
+                    if_power[i] = if_power_avg
+                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
 
-#             # Return to previous IF frequency
-#             if_filter.set_frequency(param['IFFREQ'])
+            # Return to previous IF frequency
+            if_filter.set_frequency(param['IFFREQ'])
 
-#             # Plot
-#             plt.figure(figsize=(6,5))
-#             plt.plot(if_frequency, if_power)
-#             plt.fill_between(if_frequency, if_power - if_power_std, if_power + if_power_std, alpha=0.2)
-#             plt.xlabel("IF frequency (GHZ)")
-#             plt.ylabel("IF power (K)")
-#             plt.show()
+            # Plot
+            plt.figure(figsize=(6,5))
+            plt.plot(if_frequency, if_power)
+            plt.fill_between(if_frequency, if_power - if_power_std, if_power + if_power_std, alpha=0.2)
+            plt.xlabel("IF frequency (GHZ)")
+            plt.ylabel("IF power (K)")
+            plt.show()
 
-#             # Save data
-#             filename = ask_filename()
-#             if filename is None:
-#                 print("\tNot any saving data.\n")
-#             else:
-#                 # Save data
-#                 header = "IF frequency (GHz), IF power (K), IF std dev (K)"
-#                 np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power, if_power_std)).T, header=header)
-#                 # Save metadata
-#                 with open(filename + ".mdat", "w") as fout:
-#                     json.dump(param, fout, indent=4)
+            # Save data
+            filename = ask_filename()
+            if filename is None:
+                print("\tNot any saving data.\n")
+            else:
+                # Save data
+                header = "IF frequency (GHz), IF power (K), IF std dev (K)"
+                np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power, if_power_std)).T, header=header)
+                # Save metadata
+                with open(filename + ".mdat", "w") as fout:
+                    json.dump(param, fout, indent=4)
 
         # CONST1: Set constant bias and monitor V + I
         elif command[0] == "CONST1":
@@ -1607,5 +1609,6 @@ finally:
         print("")
         bias1.close()
         bias2.close()
+        
     except (NameError, AttributeError, uldaq.ul_exception.ULException) as e:
         pass
