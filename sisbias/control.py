@@ -400,7 +400,7 @@ class SISBias:
 
     # Read voltage & current monitor ------------------------------------- ###
 
-    def read_voltage(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
+    def read_voltage(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False, msg=None):
         """Read voltage monitor.
 
         Returns:
@@ -428,14 +428,16 @@ class SISBias:
 
         vmon_avg, vmon_std = np.mean(vmon), np.std(vmon)
         if verbose:
-            print(f"\n\tVoltage monitor: {vmon_avg:.3f} +/- {vmon_std:.3f} mV\n")
+            if msg is None:
+                msg = "\n\tVoltage monitor"
+            print(f"{msg}: {vmon_avg:.3f} +/- {vmon_std:.3f} mV\n")
 
         if stats:
             return vmon_avg, vmon_std
         else:
             return vmon_avg
 
-    def read_current(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
+    def read_current(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False, msg=None):
         """Read current monitor.
 
         Returns:
@@ -463,7 +465,9 @@ class SISBias:
 
         imon_avg, imon_std = np.mean(imon), np.std(imon)
         if verbose:
-            print(f"\n\tCurrent monitor: {imon_avg:.3f} +/- {imon_std:.3f} uA\n")
+            if msg is None:
+                msg = "\n\tCurrent monitor"
+            print(f"{msg}: {imon_avg:.3f} +/- {imon_std:.3f} uA\n")
 
         if stats:
             return imon_avg, imon_std
