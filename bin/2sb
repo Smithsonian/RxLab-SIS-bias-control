@@ -430,13 +430,13 @@ try:
 
         # Read out single values (no sweep) -------------------------------- #
 
-        # VMON1: Read voltage monitor
-        elif command[0] == "VMON1":
+        # VMON: Read voltage monitor
+        elif command[0] == "VMON":
 
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure voltage monitor of channel 1\n")
-                print("\tUseage: VMON1 <average>")
+                print("\n\tMeasure voltage monitor (both channels)\n")
+                print("\tUseage: VMON <average>")
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
@@ -446,15 +446,16 @@ try:
             except (IndexError, ValueError) as e:
                 average = 2_000
 
-            _ = bias1.read_voltage(average=average, verbose=True)
+            _ = bias1.read_voltage(average=average, verbose=True, msg="\n\tCurrent monitor (channel 1)")
+            _ = bias2.read_voltage(average=average, verbose=True, msg="\tCurrent monitor (channel 2)")
 
-        # VMON2: Read voltage monitor
-        elif command[0] == "VMON2":
+        # IMON: Read current monitor
+        elif command[0] == "IMON":
 
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure voltage monitor of channel 2\n")
-                print("\tUseage: VMON2 <average>")
+                print("\n\tMeasure current monitor (both channels)\n")
+                print("\tUseage: IMON <average>")
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
@@ -464,43 +465,8 @@ try:
             except (IndexError, ValueError) as e:
                 average = 2_000
 
-            _ = bias2.read_voltage(average=average, verbose=True)
-
-        # IMON1: Read current monitor
-        elif command[0] == "IMON1":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure current monitor of channel 1\n")
-                print("\tUseage: IMON1 <average>")
-                print("\twhere <average> is the number of points to average (default is 2000)\n")
-                continue
-
-            # arg 1: number of points to average
-            try:
-                average = int(command[1])
-            except (IndexError, ValueError) as e:
-                average = 2_000
-
-            _ = bias1.read_current(average=average, verbose=True)
-
-        # IMON2: Read current monitor
-        elif command[0] == "IMON2":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure current monitor of channel 2\n")
-                print("\tUseage: IMON2 <average>")
-                print("\twhere <average> is the number of points to average (default is 2000)\n")
-                continue
-
-            # arg 1: number of points to average
-            try:
-                average = int(command[1])
-            except (IndexError, ValueError) as e:
-                average = 2_000
-
-            _ = bias2.read_current(average=average, verbose=True)
+            _ = bias1.read_current(average=average, verbose=True, msg="\n\tCurrent monitor (channel 1)")
+            _ = bias2.read_current(average=average, verbose=True, msg="\tCurrent monitor (channel 2)")
 
         # PIF: Read IF power
         elif command[0] == "PIF":
@@ -1344,7 +1310,7 @@ try:
             ax2.set_xlabel("Voltage (mV)")
             ax2.legend(loc=2, frameon=True)
             ax3.legend(loc=1, frameon=True)
-            ax3.set_ylim([0, 200])
+            ax3.set_ylim([0, 300])
             ax2.set_ylim(ymin=0)
             plt.show()
 
@@ -1595,6 +1561,9 @@ try:
         # Command not recognized...
         else:
             print("\n\tCommand not recognized.\n")
+
+except ValueError:
+    print("\nDAQ not found.")
 
 except KeyboardInterrupt:
     print("\nClosing program.")
