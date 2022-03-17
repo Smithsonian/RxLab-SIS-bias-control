@@ -376,7 +376,7 @@ try:
                 print("\t      <average> is the averaging, default is 1000\n")
                 continue
 
-            print("\n\tCALIBRATE IF POWER (BOTH CHANNELS):")
+            print("\n\tCALIBRATE IF POWER (BOTH CHANNELS)")
 
             # arg 1: min bias voltage
             if len(command) > 1:
@@ -397,13 +397,17 @@ try:
                 average = 10_000
 
             # Calculate IF power offset
-            param1["IFOFFSET"] = bias1.calibrate_if_offset(average=average)
-            param2["IFOFFSET"] = bias2.calibrate_if_offset(average=average)
+            print("\n\tCHANNEL 1:")
+            param1["IFOFFSET"] = bias1.calibrate_if_offset(average=average, wait2=False)
+            print("\tCHANNEL 2:")
+            param2["IFOFFSET"] = bias2.calibrate_if_offset(average=average, wait1=False)
 
             # Calculate shot noise slope
+            print("\n\tCHANNEL 1:\n")
             vmin = vbmin / 1000 * bias1.config['VMON']['GAIN'] 
             vmax = vbmax / 1000 * bias1.config['VMON']['GAIN'] 
             param1["IFCORR"] = bias1.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param1["NJUNC"], extra=False, debug=True)
+            print("\tCHANNEL 2:\n")
             vmin = vbmin / 1000 * bias2.config['VMON']['GAIN'] 
             vmax = vbmax / 1000 * bias2.config['VMON']['GAIN'] 
             param2["IFCORR"] = bias2.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param2["NJUNC"], extra=False, debug=True)
@@ -414,14 +418,14 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tCalibrate I-V offset (both channels)\n")
-                print("\tUseage: CALIV <vbmin> <vbmax>")
-                print("\twhere <vbmin> is the minimum voltage for the shot noise slope, default is 12.5 mV")
-                print("\t      <vbmax> is the maximum voltage for the shot noise slope, default is 15.0 mV\n")
+                print("\tUseage: CALIV\n")
                 continue
 
-            print("\n\tCALIBRATE I-V OFFSET (BOTH CHANNELS):")
+            print("\n\tCALIBRATE I-V OFFSET (BOTH CHANNELS)\n")
             
+            print("\tCHANNEL 1:\n")
             param1["IOFFSET"], param1["VOFFSET"] = bias1.calibrate_iv_offset(debug=True)
+            print("\tCHANNEL 2:\n")
             param2["IOFFSET"], param2["VOFFSET"] = bias2.calibrate_iv_offset(debug=True)
 
         # Read out single values (no sweep) -------------------------------- #
@@ -498,13 +502,13 @@ try:
 
             _ = bias2.read_current(average=average, verbose=True)
 
-        # PIF1: Read IF power
-        elif command[0] == "PIF1":
+        # PIF: Read IF power
+        elif command[0] == "PIF":
 
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure IF power of channel 1\n")
-                print("\tUseage: PIF1 <average>")
+                print("\n\tMeasure IF power of both channels\n")
+                print("\tUseage: PIF <average>")
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
@@ -515,23 +519,6 @@ try:
                 average = 2_000
 
             _ = bias1.read_ifpower(average=average, verbose=True)
-
-        # PIF2: Read IF power
-        elif command[0] == "PIF2":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure IF power of channel 2\n")
-                print("\tUseage: PIF2 <average>")
-                print("\twhere <average> is the number of points to average (default is 2000)\n")
-                continue
-
-            # arg 1: number of points to average
-            try:
-                average = int(command[1])
-            except (IndexError, ValueError) as e:
-                average = 2_000
-
             _ = bias2.read_ifpower(average=average, verbose=True)
 
         # READ: read monitors continuously
@@ -1478,7 +1465,7 @@ try:
 
             # arg 1: control voltage
             if len(command) > 1:
-                param['VCTRL'] = float(command[1])
+                param1['VCTRL'] = float(command[1])
 
             # arg 2: number of sample points
             if len(command) > 2:
@@ -1503,7 +1490,7 @@ try:
 
             # arg 1: control voltage
             if len(command) > 1:
-                param['VCTRL'] = float(command[1])
+                param2['VCTRL'] = float(command[1])
 
             # arg 2: number of sample points
             if len(command) > 2:
