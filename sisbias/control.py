@@ -315,60 +315,6 @@ class SISBias:
         # Start analog output scan
         self._sweep(vctrl_weave, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
 
-    def pulse_control_voltage(self, vmin=-1, vmax=1, npts=1000, sweep_period=5, vlimit=5, verbose=True):
-        """Pulse control voltage (square wave).
-
-        Uses two channels to create a differential output (to allow negative
-        control voltages).
-
-        Args:
-            vmin (float): minimum voltage
-            vmax (float): maximum voltage
-            npts (int): number of points, default is 1000
-            sweep_period (float): sweep period, in [s], default is 5.0
-            vlimit (float): hard limit for control voltage, in [V], default is 5
-            verbose (bool): print to terminal, default is False
-
-        """
-
-        # ensure that this DAQ support hardware pacing
-        if not self.has_ao_pacer:
-            print("\nWarning: this DAQ does not support hardwear pacing.")
-            print("You cannot use sweep_control_voltage with this DAQ")
-            return
-
-        # make sure vmin/vmax are within limits
-        vlimit = abs(vlimit)
-        msg = f"vmin or vmax is outside limits ({vlimit:.1f} V)"
-        if vmax > vlimit:
-            print(msg)
-            vmax = abs(vlimit)
-        if vmin > vlimit:
-            print(msg)
-            vmin = abs(vlimit)
-        if vmax < -vlimit:
-            print(msg)
-            vmax = -vlimit
-        if vmin < -vlimit:
-            print(msg)
-            vmin = -vlimit
-
-        sample_period = sweep_period / npts
-        sample_frequency = 1 / sample_period
-        samples_per_channel = int(npts)
-
-        # Build control voltage (square wave)
-        vctrl_p = vmax * np.r_[np.ones(samples_per_channel//2),
-                               np.zeros(samples_per_channel//2)]
-        vctrl_n = vmin * np.r_[np.zeros(samples_per_channel//2),
-                               np.ones(samples_per_channel//2)]
-        vctrl = np.empty(len(vctrl_n) + len(vctrl_p), dtype=float)
-        vctrl[::2] = vctrl_n
-        vctrl[1::2] = vctrl_p
-
-        # Start analog output scan
-        self._sweep(vctrl, sweep_period=sweep_period, sample_frequency=sample_frequency, verbose=verbose)
-
     def _sweep(self, voltage, sweep_period=5, sample_frequency=1000, verbose=True):
         """Sweep control voltage.
 
@@ -405,7 +351,7 @@ class SISBias:
         vctrl_n_chan = self.config['VCTRL']['AO_N_CHANNEL']
         vctrl_p_chan = self.config['VCTRL']['AO_P_CHANNEL']
         rate = self.ao_device.a_out_scan(vctrl_n_chan, vctrl_p_chan,
-                                         AO_RANGE, samples_per_channel, 
+                                         self.ao_range, samples_per_channel, 
                                          sample_frequency, SCAN_OPTIONS, 
                                          SCAN_FLAGS, output_buffer)
 
@@ -414,7 +360,7 @@ class SISBias:
             vbmax = vmax / self.config['VMON']['GAIN'] * 1000
             print("\n\tSweep control voltage:")
             print(f'\t\t{self.daq_name}: ready')
-            print(f'\t\tDAC range:             {AO_RANGE.name}')
+            print(f'\t\tDAC range:             {self.ao_range.name}')
             print(f'\t\tControl voltage range: {vmin:.1f} to {vmax:.1f} V')
             print(f'\t\tBias voltage range:    {vbmin:.1f} to {vbmax:.1f} mV')
             print(f'\t\tVoltage points:        {npts}')
@@ -696,16 +642,18 @@ class SISBias:
         res = minimize(model, x0=x0)
         voffset = res.x[0]
         ioffset = res.x[1]
-        if verbose:
-            print(f"\n\tVoltage offset: {self.cal['VOFFSET']:7.4f} mV (previous)")
-            print(f"  \tVoltage offset: {voffset:7.4f} mV (new)")
-            print(f"\n\tCurrent offset: {self.cal['IOFFSET']:7.4f} uA (previous)")
-            print(f"  \tCurrent offset: {ioffset:7.4f} uA (new)\n")
 
         # Force i=0 v=0
         vtmp = np.linspace(-0.1, 0.1, 1001)
         itmp = np.interp(vtmp, data[0, :] - voffset, data[1, :] - ioffset)
         voffset += vtmp[np.abs(itmp).argmin()]
+
+        # Print to terminal
+        if verbose:
+            print(f"\n\tVoltage offset: {self.cal['VOFFSET']:7.4f} mV (previous)")
+            print(f"  \tVoltage offset: {voffset:7.4f} mV (new)")
+            print(f"\n\tCurrent offset: {self.cal['IOFFSET']:7.4f} uA (previous)")
+            print(f"  \tCurrent offset: {ioffset:7.4f} uA (new)\n")
 
         # Save to attributes
         self.cal['VOFFSET'] = voffset
@@ -716,15 +664,9 @@ class SISBias:
             plt.title(self.name_str[1:-1])
             # I-V curve
             v1, i1 = voltage - voffset, current - ioffset
+            plt.plot(v1, i1, 'k', label="I-V")
             # Flipped I-V curve
             v2, i2 = -v1[::-1], -i1[::-1]
-            # Interpolate to common voltage
-            # x = np.linspace(-2, 2, 101)
-            # y1 = np.interp(x, v1, i1)
-            # y2 = np.interp(x, v2, i2)
-            # plt.plot(x, y1, 'k', label="I-V")
-            # plt.plot(x, y2, 'r', label="Flipped I-V")
-            plt.plot(v1, i1, 'k', label="I-V")
             plt.plot(v2, i2, 'r', label="Flipped I-V")
             plt.axvline(0, c='k', lw=0.5)
             plt.axhline(0, c='k', lw=0.5)
@@ -898,7 +840,7 @@ class SISBias:
         print("")
 
         results = self.measure_ivif(npts=npts, average=average, vmin=vmin, vmax=vmax, vlimit=vlimit, 
-                                    sleep_time=sleep_time, msg=msg, verbose=verbose)
+                                    sleep_time=sleep_time, calibrate=True, stats=False, msg=msg, verbose=verbose)
         
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
         ax1.plot(results[0], results[1])
@@ -980,7 +922,7 @@ class SISBias:
             except KeyboardInterrupt:
                 plt.close('all')
                 self.set_control_voltage(vctrl)
-                print(f"\n\tControl voltage returned to {vctrl:.2} V.\n")
+                print(f"\n\tControl voltage returned to {vctrl:.2f} V.\n")
                 break
 
     def noise_statistics(self, vcontrol=0, npts=50000, vlimit=5):
@@ -1101,22 +1043,6 @@ class SISBias:
         ax2.set_ylim(ymin=0)
         ax4.set_ylim(ymin=0)
         ax6.set_ylim(ymin=0)
-        plt.show()
-
-    def plot(self):
-        """Plot I-V curve."""
-
-        voltage, current, power = self.read_iv_curve_buffer()
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-        ax1.plot(voltage*1e3, current*1e6, 'ko', alpha=0.2, ms=1)
-        ax1.set_xlabel("Voltage (mV)")
-        ax1.set_ylabel("Current (uA)")
-
-        ax2.plot(voltage*1e3, power, 'ko', alpha=0.2, ms=1)
-        ax2.set_xlabel("Voltage (mV)")
-        ax2.set_ylabel("Power (K)")
-
         plt.show()
 
     # Digital input / output --------------------------------------------- ###

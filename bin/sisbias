@@ -461,25 +461,6 @@ try:
                                        npts=param['NPTS'])
             print("")
 
-        # SQUARE: Sweep control voltage (square wave)
-        elif command[0] == "SQUARE":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tSweep control voltage (square wave)\n")
-                print("\tUseage: SQUARE\n")
-                continue
-
-            print("\n\tPULSE CONTROL VOLTAGE")
-            bias.pulse_control_voltage(vmin=param['VMIN'],
-                                       vmax=param['VMAX'],
-                                       sweep_period=param['PERIOD'],
-                                       npts=param['NPTS'], 
-                                       vlimit=param['VLIMIT'])
-            bias.start_iv_monitor_scan(sweep_period=param['PERIOD'],
-                                       npts=param['NPTS'])
-            print("")
-
         # Measure IV / IF data --------------------------------------------- #
 
         # TUNE: Plot I-V curve for tuning purposes
