@@ -16,11 +16,7 @@ from scipy.optimize import minimize
 from sisbias.filters import gauss_conv
 from sisbias.util import progress_bar
 
-# DAQ interface
-INTERFACE_TYPE = InterfaceType.USB
-
 # DAQ output channels
-AO_RANGE = Range.UNI5VOLTS
 AO_FLAG = AOutFlag.DEFAULT
 SCAN_OPTIONS = ScanOption.CONTINUOUS
 SCAN_FLAGS = AOutScanFlag.DEFAULT
@@ -43,7 +39,7 @@ class SISBias:
 
     """
     
-    def __init__(self, config_file=None, cal_file=None, daq_id=None, name=None):
+    def __init__(self, config_file=None, cal_file=None, daq_id=None, name=None, interface='usb'):
         
         self.name = name
         self.name_str = f"({self.name})"
@@ -74,7 +70,15 @@ class SISBias:
             raise e
 
         # Find all available DAQ devices
-        devices = get_daq_device_inventory(INTERFACE_TYPE)
+        if interface.lower() == 'usb':
+            self.ao_range = Range.UNI5VOLTS  # TODO: Fix hack
+            devices = get_daq_device_inventory(InterfaceType.USB)
+        elif interface.lower() == 'ethernet':
+            self.ao_range = Range.BIP10VOLTS  # TODO: Fix hack
+            devices = get_daq_device_inventory(InterfaceType.ETHERNET)
+        else:
+            print("interface must be either 'usb' or 'ethernet'")
+            raise ValueError
         number_of_devices = len(devices)
 
         if daq_id is None:
@@ -112,37 +116,45 @@ class SISBias:
 
         # Verify the specified DAQ device supports analog input
         if self.ai_device is None:
-            raise RuntimeError('Error: The DAQ device does not support analog input')
+            raise RuntimeError('\nError: The DAQ device does not support analog input')
                                
         # Verify the specified DAQ device supports analog output
         if self.ao_device is None:
-            raise RuntimeError('Error: The DAQ device does not support analog output')
+            raise RuntimeError('\nError: The DAQ device does not support analog output')
 
         # Verify the specified DAQ device supports digital input/output
         if self.dio_device is None:
-            raise RuntimeError('Error: The DAQ device does not support digital input/output')
+            raise RuntimeError('\nError: The DAQ device does not support digital input/output')
                 
         # Verify the device supports hardware pacing for analog output
         self.ao_info = self.ao_device.get_info()
-        if not self.ao_info.has_pacer():
-            raise RuntimeError('Error: The DAQ device does not support paced analog output')
+        self.has_ao_pacer = self.ao_info.has_pacer()
+        # print(self.ao_info.get_ranges())
+        # TODO: add ability to specify AO range
+        # TODO: add ability to specify AI range (per channel??)
+        if not self.has_ao_pacer:
+            print('\nWarning: This DAQ device does not support hardware-paced analog output')
                                
         # Establish a connection to the device.
         self.desc = self.daq_device.get_descriptor()
         self.daq_name = "{} ({})".format(self.desc.dev_string, self.desc.unique_id)
-        print(f'\n\tConnecting to {self.daq_name}... ', end=" ")
+        print(f'\nConnecting to {self.daq_name}... ', end=" ")
         self.daq_device.connect(connection_code=0)
-        print("done")
+        print("done\n")
         
         # Initialize scan status
-        self._ao_scan_status, self._ao_transfer_status = self.ao_device.get_scan_status()
+        if self.has_ao_pacer:
+            self._ao_scan_status, self._ao_transfer_status = self.ao_device.get_scan_status()
+        else:
+            self._ao_scan_status, self._ao_transfer_status = False, False
         self._ai_scan_status, self._ai_transfer_status = self.ai_device.get_scan_status()
         self.analog_input = None
 
         # Initialize bit for controlling ambient load
         self.dio_info = self.dio_device.get_info()
-        self.dio_device.d_config_port(DigitalPortType.FIRSTPORTA, DigitalDirection.OUTPUT)
-        self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 0)
+        self.digital_port_type = self.dio_info.get_port_types()[0]
+        self.dio_device.d_config_port(self.digital_port_type, DigitalDirection.OUTPUT)
+        self.dio_device.d_bit_out(self.digital_port_type, 0, 0)
 
     def __repr__(self):
 
@@ -165,7 +177,8 @@ class SISBias:
         """
 
         # Stop current scan
-        self.update_ao_scan_status()
+        if self.has_ao_pacer:
+            self.update_ao_scan_status()
         if self._ao_scan_status == ScanStatus.RUNNING:
             self.ao_device.scan_stop()
 
@@ -181,11 +194,11 @@ class SISBias:
 
         # Use two unipolar outputs to create differential output
         if voltage >= 0:
-            self.ao_device.a_out(self.config['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
-            self.ao_device.a_out(self.config['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, voltage)
+            self.ao_device.a_out(self.config['VCTRL']['AO_N_CHANNEL'], self.ao_range, AO_FLAG, 0.0)
+            self.ao_device.a_out(self.config['VCTRL']['AO_P_CHANNEL'], self.ao_range, AO_FLAG, voltage)
         else:
-            self.ao_device.a_out(self.config['VCTRL']['AO_N_CHANNEL'], AO_RANGE, AO_FLAG, -voltage)
-            self.ao_device.a_out(self.config['VCTRL']['AO_P_CHANNEL'], AO_RANGE, AO_FLAG, 0.0)
+            self.ao_device.a_out(self.config['VCTRL']['AO_N_CHANNEL'], self.ao_range, AO_FLAG, -voltage)
+            self.ao_device.a_out(self.config['VCTRL']['AO_P_CHANNEL'], self.ao_range, AO_FLAG, 0.0)
 
         if verbose:
             print(f"Control voltage set to {voltage:.1f} V")
@@ -261,6 +274,12 @@ class SISBias:
 
         """
 
+        # ensure that this DAQ support hardware pacing
+        if not self.has_ao_pacer:
+            print("\nWarning: this DAQ does not support hardwear pacing.")
+            print("You cannot use sweep_control_voltage with this DAQ")
+            return
+
         # make sure vmin/vmax are within limits
         vlimit = abs(vlimit)
         msg = f"\n\t** warning: vmin or vmax is outside the limits ({-vlimit:.1f} to {vlimit:.1f} V) **"
@@ -313,6 +332,12 @@ class SISBias:
 
         """
 
+        # ensure that this DAQ support hardware pacing
+        if not self.has_ao_pacer:
+            print("\nWarning: this DAQ does not support hardwear pacing.")
+            print("You cannot use sweep_control_voltage with this DAQ")
+            return
+
         # make sure vmin/vmax are within limits
         vlimit = abs(vlimit)
         msg = f"vmin or vmax is outside limits ({vlimit:.1f} V)"
@@ -359,7 +384,8 @@ class SISBias:
         samples_per_channel = int(samples_per_period)
 
         # Stop current scan
-        self.update_ao_scan_status()
+        if self.has_ao_pacer:
+            self.update_ao_scan_status()
         if self._ao_scan_status == ScanStatus.RUNNING:
             self.ao_device.scan_stop()
 
@@ -1064,19 +1090,20 @@ class SISBias:
     def hot_load(self):
         """Move ambient load to insert hot load."""
 
-        self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 0)
+        self.dio_device.d_bit_out(self.digital_port_type, 0, 0)
 
     def cold_load(self):
         """Move ambient load to insert cold load."""
 
-        self.dio_device.d_bit_out(DigitalPortType.FIRSTPORTA, 0, 1)
+        self.dio_device.d_bit_out(self.digital_port_type, 0, 1)
 
     # Scan status -------------------------------------------------------- ###
     
     def ao_scan_status(self):
         """Update and return scan status."""
 
-        self.update_ao_scan_status()
+        if self.has_ao_pacer:
+            self.update_ao_scan_status()
         return self._ao_scan_status
 
     def update_ao_scan_status(self):
@@ -1140,7 +1167,8 @@ class SISBias:
             if self.daq_device:
 
                 # Stop the scan
-                self.update_ao_scan_status()
+                if self.has_ao_pacer:
+                    self.update_ao_scan_status()
                 if self._ao_scan_status == ScanStatus.RUNNING:
                     self.ao_device.scan_stop()
                 self.set_control_voltage(0)

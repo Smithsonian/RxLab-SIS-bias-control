@@ -28,58 +28,45 @@ except OSError:
 
 # Grab arguments
 parser = argparse.ArgumentParser(description="Plot I-V curve and IF power in realtime.")
-parser.add_argument("-c", "--channel", type=int, help="2SB channel (1 or 2)", default=None)
 parser.add_argument("--calfile", type=str, help="Calibration file", default=None)
 parser.add_argument("--configfile", type=str, help="Configuration file", default=None)
 parser.add_argument("--paramfile", type=str, help="Parameter file", default=None)
 parser.add_argument("--filteraddr", type=str, help="YIG filter IP address", default=None)  #"192.168.1.15")
+parser.add_argument("--ethernet", action='store_true', help="Use ethernet connection")
 args = parser.parse_args()
 
-if args.channel is not None:
-    if args.channel == 1:
-        daq_id = "01D87C3C"
-        config_filename = user_config_dir("2sb-mixer1.config")
-        param_filename = user_config_dir("2sb-mixer1.param")
-        cal_filename = user_config_dir("2sb-mixer1.cal")
-    elif args.channel == 2:
-        daq_id = "01D87C1E"
-        config_filename = user_config_dir("2sb-mixer2.config")
-        param_filename = user_config_dir("2sb-mixer2.param")
-        cal_filename = user_config_dir("2sb-mixer2.cal")
-    else: 
-        raise ValueError
-    # if args.filteraddr is None:
-    #     args.filteraddr = "192.168.1.15"
-    args.filteraddr = None
+# Location of configuration file
+if args.configfile is None:
+    config_filename = user_config_dir("rxlab-sis-bias.config")
 else:
-    daq_id = None 
+    config_filename = args.configfile
 
-    # Location of configuration file
-    if args.configfile is None:
-        config_filename = user_config_dir("rxlab-sis-bias.config")
-    else:
-        config_filename = args.configfile
+# Location of parameter file
+if args.paramfile is None:
+    param_filename = user_config_dir("rxlab-sis-bias.param")
+else:
+    param_filename = args.paramfile
 
-    # Location of parameter file
-    if args.paramfile is None:
-        param_filename = user_config_dir("rxlab-sis-bias.param")
-    else:
-        param_filename = args.paramfile
-
-    # Location of calibration file
-    if args.calfile is None:
-        cal_filename = user_config_dir("rxlab-sis-bias.cal")
-    else: 
-        cal_filename = args.calfile
+# Location of calibration file
+if args.calfile is None:
+    cal_filename = user_config_dir("rxlab-sis-bias.cal")
+else: 
+    cal_filename = args.calfile
 
 with open(param_filename) as _fin:
     param = json.load(_fin)
+
+# Interface type
+if args.ethernet:
+    interface = 'ethernet'
+else:
+    interface = 'usb'
 
 # ----------------------------------------------------------------------------
 
 try:
     # Initialize bias control
-    bias = SISBias(config_file=config_filename, cal_file=cal_filename, daq_id=daq_id)
+    bias = SISBias(config_file=config_filename, cal_file=cal_filename, interface=interface)
     
     # Set bias voltage to zero
     param['VCTRL'] = 0
@@ -1038,8 +1025,9 @@ except KeyboardInterrupt:
 except EOFError:
     print("\nClosing program.")
 
-except uldaq.ul_exception.ULException:
-    print("\nConnection lost to device.")
+except uldaq.ul_exception.ULException as e:
+    print("\nConnection lost to device.\n")
+    raise e
 
 except RuntimeError as e:
     print(e, "\n")
