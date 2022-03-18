@@ -38,6 +38,8 @@ class SISBias:
 
     """
     
+    # TODO: add method for vctrl -> vbias and vbias -> vctrl
+    
     def __init__(self, config_file=None, cal_file=None, daq_id=None, name=None, interface='usb'):
         
         self.name = name
@@ -714,7 +716,7 @@ class SISBias:
 
         return self.cal['IFOFFSET']
 
-    def calibrate_if(self, vmin=2.5, vmax=3, average=2000, npts=10, sleep_time=0.2, njunc=3, extra=False, verbose=True, debug=False):
+    def calibrate_if(self, vmin=1, vmax=1.5, average=2000, npts=10, sleep_time=0.2, njunc=3, extra=False, verbose=True, debug=False):
         """Calibrate IF power using shot noise slope.
 
         Args:
