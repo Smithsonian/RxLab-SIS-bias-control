@@ -7,9 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import uldaq
 from appdirs import user_config_dir
-from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag,
-                   DaqDevice, DigitalDirection, DigitalPortType, InterfaceType,
-                   Range, ScanOption, ScanStatus, create_float_buffer,
+from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag, DaqDevice, DigitalDirection, 
+                   DigitalPortType, InterfaceType, Range, ScanOption, ScanStatus, create_float_buffer, 
                    get_daq_device_inventory)
 from scipy.optimize import minimize
 
@@ -500,7 +499,7 @@ class SISBias:
         else:
             return imon_avg
     
-    def read_ifpower(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
+    def read_ifpower(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False, msg=None):
         """Read IF power from power meter/detector.
 
         Returns:
@@ -524,7 +523,9 @@ class SISBias:
 
         pif_avg, pif_std = np.mean(pif), np.std(pif)
         if verbose:
-            print(f"\n\tIF power: {pif_avg:.3f} +/- {pif_std:.3f} K\n")
+            if msg is None:
+                msg = "\n\tIF power"
+            print(f"{msg}: {pif_avg:.3f} +/- {pif_std:.3f} K\n")
 
         if stats:
             return pif_avg, pif_std
