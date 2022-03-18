@@ -851,7 +851,7 @@ class SISBias:
         
         return results[:, idx]
 
-    def monitor(self, npts=1000, period=0.2, vmin=-1, vmax=1, vlimit=5, resistance=None):
+    def monitor(self, npts=1000, period=0.2, vmin=-1, vmax=1, vlimit=5, resistance=None, vctrl=0):
         """Plot real-time monitor.
 
         Args:
@@ -919,8 +919,8 @@ class SISBias:
 
             except KeyboardInterrupt:
                 plt.close('all')
-                self.set_control_voltage(0)
-                print("\n\tControl voltage set to 0 V.\n")
+                self.set_control_voltage(vctrl)
+                print(f"\n\tControl voltage returned to {vctrl:.2} V.\n")
                 break
 
     def noise_statistics(self, vcontrol=0, npts=50000, vlimit=5):
