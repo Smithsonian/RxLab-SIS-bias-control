@@ -877,6 +877,39 @@ class SISBias:
         
         return results[:, idx]
 
+    def plot_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, msg=None, verbose=True):
+        """Plot I-V curve and IF power as a function of bias voltage.
+
+        Args:
+            npts (int): number of points, default is 201
+            average (int): averaging, default is 64
+            vmin (float): minimum control voltage, in [V], default is -1
+            vmax (float): maximum control voltage, in [V], default is -1
+            vlimit (float): hard limit on control voltage, in [V], default is 1
+            sleep_time (float): sleep time between voltage points, in [s], default is 0.1
+            verbose (bool): verbosity, default is True
+
+        Returns:
+            tuple: voltage, voltage error, current, current error, IF power, IF power error
+
+        """
+
+        print("")
+
+        results = self.measure_ivif(npts=npts, average=average, vmin=vmin, vmax=vmax, vlimit=vlimit, 
+                                    sleep_time=sleep_time, msg=msg, verbose=verbose)
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+        ax1.plot(results[0], results[1])
+        ax2.plot(results[0], results[2])
+        ax1.set_xlabel("Voltage (mV)")
+        ax2.set_xlabel("Voltage (mV)")
+        ax1.set_ylabel("Current (uA)")
+        ax2.set_ylabel("IF power (K)")
+        plt.show()
+
+        return results
+
     def monitor(self, npts=1000, period=0.2, vmin=-1, vmax=1, vlimit=5, resistance=None, vctrl=0):
         """Plot real-time monitor.
 
