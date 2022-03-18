@@ -55,6 +55,7 @@ try:
     param2['VCTRL'] = 0
     bias1.set_control_voltage(param1['VCTRL'])
     bias2.set_control_voltage(param2['VCTRL'])
+    print("\nBias voltage set to 0 V (both channels)")
 
     # Save voltage / current gain to param (from config file)
     param1["VMONGAIN"] = bias1.config['VMON']['GAIN']
@@ -66,15 +67,15 @@ try:
     param1["IMONOFFSET"] = bias1.config['IMON']['OFFSET']
     param2["IMONOFFSET"] = bias2.config['IMON']['OFFSET']
 
-    # # Connect to IF filter
-    # if args.filteraddr is not None:
-    #     print(f"Connecting to IF YIG filter (IP: {args.filteraddr})...", end=" ")
-    #     if_filter = YigFilter(args.filteraddr)
-    #     if_filter.set_frequency(param['IFFREQ'])
-    #     print("done\n")
-    # else:
-    #     print("No IF filter specified\n")
-    #     if_filter = None
+    # Connect to IF filter
+    if filteraddr is not None:
+        print(f"\nConnecting to IF YIG filter (IP: {filteraddr})...", end=" ")
+        if_filter = YigFilter(filteraddr)
+        if_filter.set_frequency(param1['IFFREQ'])
+        print("done")
+    else:
+        print("No IF filter specified")
+        if_filter = None
 
     print("\nRemember to specify measurement parameters:")
     print("\t-device, njunc, icoil, freq, etc.\n")
@@ -312,7 +313,7 @@ try:
             try:
                 iterations = int(command[2])
             except (IndexError, ValueError) as e:
-                iterations = 3
+                iterations = 1
             
             if vbias is not None:
                 print(f"\n\tBias target:   {vbias:6.2f} mV\n")
@@ -398,21 +399,29 @@ try:
             else:
                 average = 10_000
 
+            # Make sure voltage sweeps are stationary
+            bias1.set_control_voltage(param1['VCTRL'])
+            bias2.set_control_voltage(param2['VCTRL'])
+
             # Calculate IF power offset
             print("\n\tCHANNEL 1:")
             param1["IFOFFSET"] = bias1.calibrate_if_offset(average=average, wait2=False)
+            bias1.set_control_voltage(param1['VCTRL'])
             print("\tCHANNEL 2:")
             param2["IFOFFSET"] = bias2.calibrate_if_offset(average=average, wait1=False)
+            bias2.set_control_voltage(param2['VCTRL'])
 
             # Calculate shot noise slope
             print("\n\tCHANNEL 1:\n")
             vmin = vbmin / 1000 * bias1.config['VMON']['GAIN'] 
             vmax = vbmax / 1000 * bias1.config['VMON']['GAIN'] 
             param1["IFCORR"] = bias1.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param1["NJUNC"], extra=False, debug=True)
+            bias1.set_control_voltage(param1['VCTRL'])
             print("\tCHANNEL 2:\n")
             vmin = vbmin / 1000 * bias2.config['VMON']['GAIN'] 
             vmax = vbmax / 1000 * bias2.config['VMON']['GAIN'] 
             param2["IFCORR"] = bias2.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param2["NJUNC"], extra=False, debug=True)
+            bias2.set_control_voltage(param2['VCTRL'])
 
         # CALIV: Calibrate I-V data
         elif command[0] == "CALIV":
@@ -427,8 +436,10 @@ try:
             
             print("\tCHANNEL 1:\n")
             param1["IOFFSET"], param1["VOFFSET"] = bias1.calibrate_iv_offset(debug=True)
+            bias1.set_control_voltage(param1['VCTRL'])
             print("\tCHANNEL 2:\n")
             param2["IOFFSET"], param2["VOFFSET"] = bias2.calibrate_iv_offset(debug=True)
+            bias1.set_control_voltage(param1['VCTRL'])
 
         # Read out single values (no sweep) -------------------------------- #
 
@@ -691,9 +702,10 @@ try:
 
                 except KeyboardInterrupt:
                     plt.close('all')
-                    bias1.set_control_voltage(0)
-                    bias2.set_control_voltage(0)
-                    print("\n\tControl voltage set to 0 V.\n")
+                    bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+                    bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+                    print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
+                    print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
                     break
 
         # MONITOR1: Real time plot of I-V curve
@@ -714,7 +726,7 @@ try:
             else:
                 resistance = None
 
-            bias1.monitor(npts=param1['NPTS'], period=param1['PERIOD'], vmin=param1['VMIN'], vmax=param1['VMAX'], vlimit=param1['VLIMIT'], resistance=resistance)
+            bias1.monitor(npts=param1['NPTS'], period=param1['PERIOD'], vmin=param1['VMIN'], vmax=param1['VMAX'], vlimit=param1['VLIMIT'], resistance=resistance, vctrl=param1['VCTRL'])
 
         # MONITOR2: Real time plot of I-V curve
         elif command[0] == "MONITOR2" or command[0] == "MON2":
@@ -734,7 +746,7 @@ try:
             else:
                 resistance = None
 
-            bias2.monitor(npts=param2['NPTS'], period=param2['PERIOD'], vmin=param2['VMIN'], vmax=param2['VMAX'], vlimit=param2['VLIMIT'], resistance=resistance)
+            bias2.monitor(npts=param2['NPTS'], period=param2['PERIOD'], vmin=param2['VMIN'], vmax=param2['VMAX'], vlimit=param2['VLIMIT'], resistance=resistance, vctrl=param2['VCTRL'])
 
         # MEASURE: Measure IV / IF curve
         elif command[0] == "MEASURE" or command[0] == "M":
@@ -784,7 +796,7 @@ try:
                 ifpower1, ifpower2 = np.zeros(npts), np.zeros(npts)
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
                     bias1.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
-                    bias2.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
+                    bias2.set_control_voltage(_vctrl, vlimit=param2['VLIMIT'])
                     time.sleep(sleep_time)
                     voltage1[i], current1[i], ifpower1[i] = bias1.read_all(average=average)
                     voltage2[i], current2[i], ifpower2[i] = bias2.read_all(average=average)
@@ -793,6 +805,8 @@ try:
                 print("")
                 plt.close('all')
                 continue
+            bias1.set_control_voltage(param1['VCTRL'])
+            bias2.set_control_voltage(param2['VCTRL'])
 
             # Sort by voltage
             idx = voltage1.argsort()
@@ -964,7 +978,10 @@ try:
             except KeyboardInterrupt:
                 print("")
                 plt.close('all')
+                bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+                print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.\n")
                 continue
+            bias1.set_control_voltage(param1['VCTRL'])
 
             # Sort by voltage
             idx = voltage.argsort()
@@ -1041,6 +1058,9 @@ try:
                 with open(filename + ".mdat", "w") as fout:
                     json.dump(param1, fout, indent=4)
 
+            bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+            print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.\n")
+
         # MEASURE2: Measure IV / IF curve
         elif command[0] == "MEASURE2" or command[0] == "M2":
 
@@ -1095,7 +1115,10 @@ try:
             except KeyboardInterrupt:
                 print("")
                 plt.close('all')
+                bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+                print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
                 continue
+            bias2.set_control_voltage(param2['VCTRL'])
 
             # Sort by voltage
             idx = voltage.argsort()
@@ -1172,6 +1195,9 @@ try:
                 with open(filename + ".mdat", "w") as fout:
                     json.dump(param2, fout, indent=4)
 
+            bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+            print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
+
         # YFAC: Measure Y-factor
         elif command[0] == "YFAC" or command[0] == "Y":
 
@@ -1208,61 +1234,98 @@ try:
             # Parameters
             vmin, vmax, vlimit = param1["VMIN"], param1["VMAX"], param1["VLIMIT"]
             vbmin, vbmax = vmin * 1000 / bias1.config['VMON']['GAIN'], vmax * 1000 / bias1.config['VMON']['GAIN']
-            print(f"\n\tControl voltage sweep: {vmin:4.1f} to {vmax:4.1f} V")
-            print(f"  \tBias voltage sweep:    {vbmin:4.1f} to {vbmax:4.1f} mV\n")
-            print(f"\tNumber of points: {npts}")
-            print(f"\tAveraging: {average}")
-            print(f"\tSleep time: {sleep_time:.1f} s\n")
+            print(f"\n\tBias voltage sweep:    {vbmin:4.1f} to {vbmax:4.1f} mV")
+            print(f"  \tControl voltage sweep: {vmin:4.1f} to {vmax:4.1f} V\n")
+            print(f"  \tNumber of points: {npts}")
+            print(f"  \tAveraging: {average}")
+            print(f"  \tSleep time: {sleep_time:.1f} s\n")
 
-            # Start with hot load
+            # Start with channel 1
+            print("\tCHANNEL 1:\n")
+            bias2.set_control_voltage(param2['VCTRL'])
+            print(f"\tBias voltage (ch. 2) set to {param2['VCTRL']*1000/bias2.config['VMON']['GAIN']:.2f} mV\n")
+
+            # Hot load
             bias2.hot_load()
             time.sleep(1)
             vctrl_sweep = np.linspace(vmin, vmax, npts)
             try:
                 results1 = np.zeros((3, npts))
-                results2 = np.zeros((3, npts))
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
                     bias1.set_control_voltage(_vctrl, vlimit=vlimit)
-                    bias2.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
                     results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
-                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
-                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load:  ")
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load (ch. 1):  ")
             except KeyboardInterrupt:
                 print("")
                 plt.close('all')
+                bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+                print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
                 continue
+            vh1, ih1, ph1 = results1[:, results1[0, :].argsort()]
 
-            # Sort by voltage
-            results1h = results1[:, results1[0, :].argsort()]
-            results2h = results2[:, results2[0, :].argsort()]
-            vh1, ih1, ph1 = results1h
-            vh2, ih2, ph2 = results2h
-
-            # Switch to cold load
+            # Cold load
             bias2.cold_load()
             time.sleep(1)
             vctrl_sweep = np.linspace(vmin, vmax, npts)
             try:
                 results1 = np.zeros((3, npts))
-                results2 = np.zeros((3, npts))
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
                     bias1.set_control_voltage(_vctrl, vlimit=vlimit)
-                    bias2.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
                     results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
-                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
-                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load: ")
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load (ch. 1): ")
             except KeyboardInterrupt:
                 print("")
                 plt.close('all')
+                bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+                print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
                 continue
+            vc1, ic1, pc1 = results1[:, results1[0, :].argsort()]
 
-            # Sort by voltage
-            results1c = results1[:, results1[0, :].argsort()]
-            results2c = results2[:, results2[0, :].argsort()]
-            vc1, ic1, pc1 = results1c
-            vc2, ic2, pc2 = results2c
+            # Then do channel 2
+            print("\n\tCHANNEL 2:\n")
+            bias1.set_control_voltage(param1['VCTRL'])
+            print(f"\tBias voltage (ch. 1) set to {param2['VCTRL']*1000/bias1.config['VMON']['GAIN']:.2f} mV\n")
+
+            # Hot load
+            bias2.hot_load()
+            time.sleep(1)
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            try:
+                results2 = np.zeros((3, npts))
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias2.set_control_voltage(_vctrl, vlimit=vlimit)
+                    time.sleep(sleep_time)
+                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load (ch. 2):  ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+                print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.")
+                continue
+            results2h = results2[:, results2[0, :].argsort()]
+            vh2, ih2, ph2 = results2h
+
+            # Cold load
+            bias2.cold_load()
+            time.sleep(1)
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            try:
+                results2 = np.zeros((3, npts))
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias2.set_control_voltage(_vctrl, vlimit=vlimit)
+                    time.sleep(sleep_time)
+                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load (ch. 2): ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+                print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.")
+                continue
+            vc2, ic2, pc2 = results2[:, results2[0, :].argsort()]
 
             # Interpolate to common voltage
             vb_min = max(vh1.min(), vc1.min(), vh2.min(), vc2.min())
@@ -1339,39 +1402,122 @@ try:
                 with open(filename2 + ".mdat", "w") as fout:
                     json.dump(param2, fout, indent=4)
 
+            bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+            bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+            print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
+            print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
+
+        # # MEASUREIF: Measure IF power vs IF frequency
+        # elif command[0] == "MEASUREIF" or command[0] == "MIF":
+
+        #     # Print help
+        #     if len(command) == 2 and command[1].upper() == "H":
+        #         print("\n\tMeasure IF power versus IF frequency\n")
+        #         print("\tUseage: MEASUREIF <start> <stop> <step> <average>")
+        #         print("\t        MIF <start> <stop> <step> <average>")
+        #         print("\twhere <start> is the start frequency, in units GHz (default 3)")
+        #         print("\t      <stop> is the stop frequency, in units GHz (default 25)")
+        #         print("\t      <step> is the frequency step, in units GHz (default 0.1)")
+        #         print("\t      <average> is the number of points to average (default 100)\n")
+        #         continue
+
+        #     print("\n\tMEASURE IF POWER VS IF FREQUENCY:\n")
+
+        #     # arg 1: start
+        #     if len(command) > 1:
+        #         start = float(command[1])
+        #     else:
+        #         start = 3.0
+
+        #     # arg 2: stop
+        #     if len(command) > 2:
+        #         stop = float(command[2])
+        #     else:
+        #         stop = 25.0
+
+        #     # arg 3: step
+        #     if len(command) > 3:
+        #         step = float(command[3])
+        #     else:
+        #         step = 0.1
+
+        #     # arg 4: average
+        #     if len(command) > 4:
+        #         average = float(command[3])
+        #     else:
+        #         average = 100
+
+        #     # Measure IF power
+        #     try:
+        #         if_frequency = np.arange(start, stop+1e-10, step)
+        #         if_power = np.empty_like(if_frequency)
+        #         if_power_std = np.empty_like(if_frequency)
+        #         for i, _if_freq in np.ndenumerate(if_frequency):
+        #             if_filter.set_frequency(_if_freq)
+        #             time.sleep(0.1)
+        #             if_power_avg, if_power_std[i] = bias1.read_ifpower(average=average, stats=True)
+        #             if_power[i] = if_power_avg
+        #             progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress: ")
+        #     except KeyboardInterrupt:
+        #         print("")
+        #         plt.close('all')
+        #         continue
+
+        #     # Return to previous IF frequency
+        #     if_filter.set_frequency(param1['IFFREQ'])
+
+        #     # Plot
+        #     plt.figure(figsize=(6,5))
+        #     plt.plot(if_frequency, if_power)
+        #     plt.fill_between(if_frequency, if_power - if_power_std, if_power + if_power_std, alpha=0.2)
+        #     plt.xlabel("IF frequency (GHZ)")
+        #     plt.ylabel("IF power (K)")
+        #     plt.show()
+
+        #     # Save data
+        #     filename = ask_filename()
+        #     if filename is None:
+        #         print("\tNot any saving data.\n")
+        #     else:
+        #         # Save data
+        #         header = "IF frequency (GHz), IF power (K), IF std dev (K)"
+        #         np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power, if_power_std)).T, header=header)
+        #         # Save metadata
+        #         with open(filename + ".mdat", "w") as fout:
+        #             json.dump(param1, fout, indent=4)
+
         # MEASUREIF: Measure IF power vs IF frequency
-        elif command[0] == "MEASUREIF" or command[0] == "MIF":
+        elif command[0] == "YIF":
 
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure IF power versus IF frequency\n")
-                print("\tUseage: MEASUREIF <start> <stop> <step> <average>")
-                print("\t        MIF <start> <stop> <step> <average>")
+                print("\n\tMeasure noise versus IF frequency\n")
+                print("\tUseage: YIF <start> <stop> <step> <average>")
                 print("\twhere <start> is the start frequency, in units GHz (default 3)")
                 print("\t      <stop> is the stop frequency, in units GHz (default 25)")
                 print("\t      <step> is the frequency step, in units GHz (default 0.1)")
                 print("\t      <average> is the number of points to average (default 100)\n")
                 continue
 
-            print("\n\tMEASURE IF POWER VS IF FREQUENCY:\n")
+            print("\n\tMEASURE NOISE VS IF FREQUENCY:\n")
 
             # arg 1: start
             if len(command) > 1:
                 start = float(command[1])
             else:
-                start = 3.0
+                start = 4.0
 
             # arg 2: stop
             if len(command) > 2:
                 stop = float(command[2])
             else:
-                stop = 25.0
+                stop = 8.0
 
             # arg 3: step
             if len(command) > 3:
                 step = float(command[3])
             else:
-                step = 0.1
+                step = 0.05
 
             # arg 4: average
             if len(command) > 4:
@@ -1379,31 +1525,68 @@ try:
             else:
                 average = 100
 
-            # Measure IF power
+            npts = (stop - start) / step + 1
+            print(f"\t--> {start:.1f} to {stop:.1f} GHz, step {step:.2f} GHz, {npts:.0f} points\n")
+
+            # Measure hot load
+            bias2.hot_load()
+            time.sleep(1)
             try:
                 if_frequency = np.arange(start, stop+1e-10, step)
-                if_power = np.empty_like(if_frequency)
-                if_power_std = np.empty_like(if_frequency)
+                if_power_h = np.empty_like(if_frequency)
+                if_power_std_h = np.empty_like(if_frequency)
                 for i, _if_freq in np.ndenumerate(if_frequency):
                     if_filter.set_frequency(_if_freq)
                     time.sleep(0.1)
-                    if_power_avg, if_power_std[i] = bias.read_ifpower(average=average, stats=True)
-                    if_power[i] = if_power_avg
-                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress: ")
+                    if_power_h[i], if_power_std_h[i] = bias1.read_ifpower(average=average, stats=True)
+                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress (hot load):  ")
             except KeyboardInterrupt:
                 print("")
                 plt.close('all')
                 continue
 
+            # Measure cold load
+            bias2.cold_load()
+            time.sleep(1)
+            try:
+                if_frequency = np.arange(start, stop+1e-10, step)
+                if_power_c = np.empty_like(if_frequency)
+                if_power_std_c = np.empty_like(if_frequency)
+                for i, _if_freq in np.ndenumerate(if_frequency):
+                    if_filter.set_frequency(_if_freq)
+                    time.sleep(0.1)
+                    if_power_c[i], if_power_std_c[i] = bias1.read_ifpower(average=average, stats=True)
+                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress (cold load): ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            print("")
+
             # Return to previous IF frequency
-            if_filter.set_frequency(param['IFFREQ'])
+            if_filter.set_frequency(param1['IFFREQ'])
+
+            # Calculate noise
+            yfac = if_power_h / if_power_c
+            tn = (293 - yfac * 78) / (yfac - 1)
+            tn[tn < 0] = 1e10
 
             # Plot
-            plt.figure(figsize=(6,5))
-            plt.plot(if_frequency, if_power)
-            plt.fill_between(if_frequency, if_power - if_power_std, if_power + if_power_std, alpha=0.2)
-            plt.xlabel("IF frequency (GHZ)")
-            plt.ylabel("IF power (K)")
+            fig, ax1 = plt.subplots(figsize=(6,5))
+            ax2 = ax1.twinx()
+            ax1.fill_between(if_frequency, if_power_h - if_power_std_h, if_power_h + if_power_std_h, color='r', alpha=0.2)
+            ax1.plot(if_frequency, if_power_h, 'r', label="Hot")
+            ax1.fill_between(if_frequency, if_power_c - if_power_std_c, if_power_c + if_power_std_c, color='b', alpha=0.2)
+            ax1.plot(if_frequency, if_power_c, 'b', label="Cold")
+            ax2.plot(if_frequency, tn, 'g')
+            ax1.set_xlabel("IF frequency (GHZ)")
+            ax1.set_ylabel("IF power (K)")
+            ax2.set_ylabel("Noise (K)")
+            ax1.set_xlim([if_frequency.min(), if_frequency.max()])
+            ax2.set_xlim([if_frequency.min(), if_frequency.max()])
+            ax1.set_ylim(ymin=0)
+            ax2.set_ylim([0, 500])
             plt.show()
 
             # Save data
@@ -1412,11 +1595,11 @@ try:
                 print("\tNot any saving data.\n")
             else:
                 # Save data
-                header = "IF frequency (GHz), IF power (K), IF std dev (K)"
-                np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power, if_power_std)).T, header=header)
+                header = "IF frequency (GHz), Hot IF power (K), Cold IF power (K), Noise temperature (K)"
+                np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power_h, if_power_c, tn)).T, header=header)
                 # Save metadata
                 with open(filename + ".mdat", "w") as fout:
-                    json.dump(param, fout, indent=4)
+                    json.dump(param1, fout, indent=4)
 
         # CONST1: Set constant bias and monitor V + I
         elif command[0] == "CONST1":
@@ -1564,8 +1747,8 @@ try:
         else:
             print("\n\tCommand not recognized.\n")
 
-except ValueError:
-    print("\nDAQ not found.")
+# except ValueError:
+#     print("\nDAQ not found.")
 
 except KeyboardInterrupt:
     print("\nClosing program.")
@@ -1609,6 +1792,6 @@ finally:
         print("")
         bias1.close()
         bias2.close()
-        
+
     except (NameError, AttributeError, uldaq.ul_exception.ULException) as e:
         pass
