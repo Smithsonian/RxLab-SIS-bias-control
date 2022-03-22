@@ -8,7 +8,7 @@ import numpy as np
 import uldaq
 from appdirs import user_config_dir
 from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag, DaqDevice, DigitalDirection, 
-                   DigitalPortType, InterfaceType, Range, ScanOption, ScanStatus, create_float_buffer, 
+                   InterfaceType, Range, ScanOption, ScanStatus, create_float_buffer,
                    get_daq_device_inventory)
 from scipy.optimize import minimize
 
@@ -277,7 +277,7 @@ class SISBias:
 
         # ensure that this DAQ support hardware pacing
         if not self.has_ao_pacer:
-            print("\nWarning: this DAQ does not support hardwear pacing.")
+            print("\nWarning: this DAQ does not support hardware pacing.")
             print("You cannot use sweep_control_voltage with this DAQ")
             return
 
@@ -566,6 +566,9 @@ class SISBias:
         """Scan voltage & current monitors.
 
         Args:
+            npts (int): number of points in IV scan, default is 1000
+            sweep_period (float): sweep period in seconds, default is 5 seconds
+            verbose (bool): print info to terminal?, default is True
 
         """
 
@@ -605,7 +608,7 @@ class SISBias:
 
         Args:
             npts (int): number of data points, default is 51
-            average (int): averaging, defualt is 64
+            average (int): averaging, default is 64
             vmin (float): minimum control voltage, default is -0.5
             vmax (float): maximum control voltage, default is 0.5
             verbose (bool): verbosity, default is True
@@ -662,7 +665,7 @@ class SISBias:
         self.cal['IOFFSET'] = ioffset
 
         if debug:
-            plt.figure(figsize=(6,5))
+            plt.figure(figsize=(6, 5))
             plt.title(self.name_str[1:-1])
             # I-V curve
             v1, i1 = voltage - voffset, current - ioffset
@@ -688,6 +691,8 @@ class SISBias:
                 is 0.2
             average (int): averaging, default is 10000
             verbose (bool): verbosity, default is True
+            wait1 (bool): wait to turn off LNA?, default is True
+            wait2 (bool): wait to turn back on LNA?, default is True
 
         Returns:
             float: if power offset, in units [AU]
@@ -710,13 +715,14 @@ class SISBias:
             change = abs(old_ifoffset - new_ifoffset) / abs(new_ifoffset) * 100
             print(f"\n\tOld IF offset:  {old_ifoffset:7.4f} AU")
             print(f"  \tNew IF offset:  {new_ifoffset:7.4f} AU")
-            print(f"  \t-> change:      {change:4.1f} %\n")
+            print(f"  \t-> change:      {change:7.1f} %\n")
         if wait2:
             _ = input("\tTurn warm LNA back on. Press enter when ready.")
 
         return self.cal['IFOFFSET']
 
-    def calibrate_if(self, vmin=1, vmax=1.5, average=2000, npts=10, sleep_time=0.2, njunc=3, extra=False, verbose=True, debug=False):
+    def calibrate_if(self, vmin=1, vmax=1.5, average=2000, npts=10, sleep_time=0.2, njunc=3, extra=False, verbose=True,
+                     debug=False, bias2=None):
         """Calibrate IF power using shot noise slope.
 
         Args:
@@ -724,28 +730,41 @@ class SISBias:
             vmax (float): maximum control voltage, in [V], default is 3.0
             average (int): averaging, default is 1000
             npts (int): number of points, default is 10
-            sleep_time (float): time to sleep between pionts, default is 0.2
+            sleep_time (float): time to sleep between points, default is 0.2
             njunc (int): number of junctions, default is 3
             extra (bool): return extra info
             verbose (bool): verbosity, default is True
             debug (bool): debug, default is False
+            bias2 (sisbias.SISBias): analyze second bias system at the same time, default is None
 
         Returns:
             IF calibration, in [K/AU]
 
         """
 
+        # Initialize some variables
+        vsis2, pif2 = None, None
+        pshot2, au2k2 = None, None
+
         # Measure shot noise
         vsweep = np.linspace(vmin, vmax, npts)
-        vsis = np.zeros(npts)
-        pif = np.zeros(npts)
+        vsis, pif = np.zeros(npts), np.zeros(npts)
+        if bias2:
+            vsis2, pif2 = np.zeros(npts), np.zeros(npts)
         for i, _v in np.ndenumerate(vsweep):
             progress_bar(i[0]+1, npts, prefix="\tMeasuring shot noise: ")
             self.set_control_voltage(_v)
+            if bias2:
+                bias2.set_control_voltage(_v)
             time.sleep(sleep_time)
             vsis[i] = self.read_voltage(average=average)
             pif[i] = self.read_ifpower(average=average, calibrate=False)
+            if bias2:
+                vsis2[i] = bias2.read_voltage(average=average)
+                pif2[i] = bias2.read_ifpower(average=average, calibrate=False)
         pif -= self.cal['IFOFFSET']
+        if bias2:
+            pif -= bias2.cal['IFOFFSET']
 
         # Calculate calibration factor
         pshot = np.polyfit(vsis, pif, 1)
@@ -755,27 +774,54 @@ class SISBias:
         pif *= au2k
         change = abs(old_correction - au2k) / abs(au2k) * 100
         if verbose:
+            if bias2:
+                print("\n\tChannel 1:")
             print(f"\n\tOld correction: {old_correction:8.1f} K/AU")
             print(f"  \tNew correction: {self.cal['IFCORR']:8.1f} K/AU")
-            print(f"  \t-> change:      {change:5.1f} %\n")
+            print(f"  \t-> change:      {change:8.1f} %\n")
+
+        if bias2:
+            # Calculate calibration factor
+            pshot2 = np.polyfit(vsis2, pif2, 1)
+            au2k2 = 5.8 / pshot2[0] / njunc
+            old_correction = bias2.cal['IFCORR']
+            bias2.cal['IFCORR'] = au2k2
+            pif2 *= au2k2
+            change = abs(old_correction - au2k2) / abs(au2k2) * 100
+            if verbose:
+                print("\n\tChannel 2:")
+                print(f"\n\tOld correction: {old_correction:8.1f} K/AU")
+                print(f"  \tNew correction: {bias2.cal['IFCORR']:8.1f} K/AU")
+                print(f"  \t-> change:      {change:8.1f} %\n")
 
         if debug:
             fig, ax1 = plt.subplots(figsize=(6, 5))
             plt.title(self.name_str[1:-1])
-            ax1.plot(vsis, pif, 'ko-')
+            ax1.plot(vsis, pif, 'ko-', label="IF power")
             ax1.plot(vsis, np.polyval(pshot, vsis) * au2k, 'r--')
+            if bias2:
+                ax1.plot(vsis2, pif2, 'bo-', label="IF power 2")
+                ax1.plot(vsis2, np.polyval(pshot2, vsis2) * au2k2, 'r--')
             ax1.set_xlabel("Bias voltage (mV)")
             ax1.set_ylabel("IF power (AU)")
+            ax1.legend()
             plt.show()
 
         if extra:
-            return self.cal['IFCORR'], vsis, pif
+            if bias2 is None:
+                return self.cal['IFCORR'], vsis, pif
+            else:
+                return self.cal['IFCORR'], vsis, pif, bias2.cal['IFCORR'], vsis2, pif2
         else:
-            return self.cal['IFCORR']
+            if bias2 is None:
+                return self.cal['IFCORR']
+            else:
+                return self.cal['IFCORR'], bias2.cal['IFCORR']
 
     # Measure I-V/IF data ------------------------------------------------ ###
 
-    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None, calibrate=True, verbose=True):
+    def measure_ivif(self, npts=201, average=64, vmin=-1, vmax=1, vlimit=5, sleep_time=0.1, stats=True, msg=None,
+                     calibrate=True, verbose=True):
         """Measure I-V curve and IF power as a function of bias voltage.
 
         Args:
@@ -803,13 +849,16 @@ class SISBias:
         else:
             size = 3
 
+        # parameters for reading data
+        _param = dict(average=average, stats=stats, calibrate=calibrate)
+
         vctrl_sweep = np.linspace(vmin, vmax, npts)
         try:
             results = np.zeros((size, npts))
             for i, _vctrl in np.ndenumerate(vctrl_sweep):
                 self.set_control_voltage(_vctrl, vlimit=vlimit)
                 time.sleep(sleep_time)
-                results[:, i] = np.array(self.read_all(average=average, stats=stats, calibrate=calibrate)).reshape(size, 1)
+                results[:, i] = np.array(self.read_all(**_param)).reshape(size, 1)
                 if verbose:
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix=msg)
         except KeyboardInterrupt:
@@ -832,6 +881,7 @@ class SISBias:
             vmax (float): maximum control voltage, in [V], default is -1
             vlimit (float): hard limit on control voltage, in [V], default is 1
             sleep_time (float): sleep time between voltage points, in [s], default is 0.1
+            msg (str): message to print while measuring IV/IF data, default is None
             verbose (bool): verbosity, default is True
 
         Returns:
@@ -844,7 +894,7 @@ class SISBias:
         results = self.measure_ivif(npts=npts, average=average, vmin=vmin, vmax=vmax, vlimit=vlimit, 
                                     sleep_time=sleep_time, calibrate=True, stats=False, msg=msg, verbose=verbose)
         
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
         ax1.plot(results[0], results[1])
         ax2.plot(results[0], results[2])
         ax1.set_xlabel("Voltage (mV)")
@@ -865,6 +915,7 @@ class SISBias:
             vmax (float): maximum control voltage, in [V], default is 1
             vlimit (float): hard limit on control voltage, in [V], default is 5
             resistance (float): plot a line of constant resistance, in [ohms], default is None
+            vctrl (float): control voltage to set upon completion, default is 0
 
         """
 
@@ -877,11 +928,6 @@ class SISBias:
         # Read I-V curve
         voltage, current, ifpower = self.read_iv_curve_buffer()
 
-        # Constant resistance line
-        if resistance is not None:
-            irmin = voltage.min() / resistance * 1e3
-            irmax = voltage.max() / resistance * 1e3
-
         # Create figure
         plt.ion()
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -891,11 +937,14 @@ class SISBias:
         ax2.set_ylabel("IF power (K)")
         ax1.set_xlim([voltage.min(), voltage.max()])
         ax2.set_xlim([voltage.min(), voltage.max()])
-        if resistance is None:
-            ax1.set_ylim([current.min(), current.max()])
-        else:
+        if resistance is not None:
+            irmin = voltage.min() / resistance * 1e3
+            irmax = voltage.max() / resistance * 1e3
             ax1.set_ylim([irmin, irmax])
-            line0, = ax1.plot([voltage.min(), voltage.max()], [irmin, irmax], 'r', label=f"{resistance:.0f} ohms")
+            _, = ax1.plot([voltage.min(), voltage.max()], [irmin, irmax], 'r', label=f"{resistance:.0f} ohms")
+        else:
+            ax1.set_ylim([current.min(), current.max()])
+
         ax2.set_ylim([0, ifpower.max() * 2])
         line1, = ax1.plot([0], [0], 'k.', ms=1, label="Data")
         line2, = ax2.plot([0], [0], 'k.', ms=1, label="Data")
@@ -1129,11 +1178,14 @@ class SISBias:
             if self.daq_device:
 
                 # Stop the scan
-                if self.has_ao_pacer:
+                if self.daq_device.is_connected() and self.has_ao_pacer:
+                    # print("update scan")
                     self.update_ao_scan_status()
-                if self._ao_scan_status == ScanStatus.RUNNING:
+                if self.daq_device.is_connected() and self._ao_scan_status == ScanStatus.RUNNING:
+                    # print("stop scan")
                     self.ao_device.scan_stop()
-                self.set_control_voltage(0)
+                if self.daq_device.is_connected():
+                    self.set_control_voltage(0)
 
                 # Disconnect from the DAQ device
                 if self.daq_device.is_connected():
