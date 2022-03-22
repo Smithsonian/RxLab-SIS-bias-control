@@ -59,17 +59,17 @@ if __name__ == "__main__":
 
     # Create noisy data
     npts = 501
-    y = np.sin(np.linspace(0, 10, npts))
-    y_noise = y + (np.random.random(npts) - 0.5) / 2
+    yy = np.sin(np.linspace(0, 10, npts))
+    yy_noise = yy + (np.random.random(npts) - 0.5) / 2
 
     # Filter noisy data
-    y_filt = gauss_conv(y, 5)
+    yy_filter = gauss_conv(yy, 5)
 
     # Plot results
-    plt.figure(figsize=(10,6))
-    plt.plot(y, 'b', label="Original Data")
-    plt.plot(y_noise, 'b', alpha=0.5, label="Noisy Data")
-    plt.plot(y_filt, 'r--', label="Filtered")
+    plt.figure(figsize=(10, 6))
+    plt.plot(yy, 'b', label="Original Data")
+    plt.plot(yy_noise, 'b', alpha=0.5, label="Noisy Data")
+    plt.plot(yy_filter, 'r--', label="Filtered")
     plt.autoscale(axis='x', enable=True, tight=True)
     plt.legend()
     plt.show()
