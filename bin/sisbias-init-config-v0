@@ -14,26 +14,26 @@ args = parser.parse_args()
 # Default configuration values (Ryan's bias board)
 config = dict(
     # Control voltage
-    VCTRL = dict(
-        AO_N_CHANNEL = 0,
-        AO_P_CHANNEL = 1,
+    VCTRL=dict(
+        AO_N_CHANNEL=0,
+        AO_P_CHANNEL=1,
         ),
     # Voltage monitor
-    VMON = dict(
-        AI_CHANNEL = 0,
-        GAIN = -100.66279, 
-        OFFSET = 0,
+    VMON=dict(
+        AI_CHANNEL=0,
+        GAIN=-100.66279,
+        OFFSET=0,
         ),
     # Current monitor
-    IMON = dict(
-        AI_CHANNEL = 1,
-        GAIN = -1502.87635,
-        OFFSET = 0,
+    IMON=dict(
+        AI_CHANNEL=1,
+        GAIN=-1502.87635,
+        OFFSET=0,
         ),
     # IF power
-    PIF = dict(
-        AI_CHANNEL = 2,
-        OFFSET = 0,
+    PIF=dict(
+        AI_CHANNEL=2,
+        OFFSET=0,
         ),
 )
 
