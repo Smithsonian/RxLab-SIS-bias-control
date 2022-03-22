@@ -31,7 +31,7 @@ parser = argparse.ArgumentParser(description="Plot I-V curve and IF power in rea
 parser.add_argument("--calfile", type=str, help="Calibration file", default=None)
 parser.add_argument("--configfile", type=str, help="Configuration file", default=None)
 parser.add_argument("--paramfile", type=str, help="Parameter file", default=None)
-parser.add_argument("--filteraddr", type=str, help="YIG filter IP address", default=None)  #"192.168.1.15")
+parser.add_argument("--filteraddr", type=str, help="YIG filter IP address", default=None)
 parser.add_argument("--ethernet", action='store_true', help="Use ethernet connection")
 args = parser.parse_args()
 
@@ -318,7 +318,7 @@ try:
 
             print("\n\tCALIBRATE I-V OFFSET:")
             
-            param["IOFFSET"], param["VOFFSET"] = bias.calibrate_iv_offset(debug=True) #npts=npts, vmin=vmin, vmax=vmax, debug=True)
+            param["IOFFSET"], param["VOFFSET"] = bias.calibrate_iv_offset(debug=True)
 
         # Read out single values (no sweep) -------------------------------- #
 
@@ -629,7 +629,7 @@ try:
                     pass
 
             # Plot I-V curve
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
             ax1.plot(voltage, current, 'k-', label='I-V curve')
             if vmin == -vmax:
                 ax1.plot(-voltage, -current, 'k-', alpha=0.5)
@@ -741,7 +741,7 @@ try:
             gain = (ph - pc) / (293 - 78)
 
             # Plot I-V curve
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
             ax3 = ax2.twinx()
             ax1.plot(v, ih, 'r', label='Hot')
             ax1.plot(v, ic, 'b', label='Cold')
@@ -823,7 +823,7 @@ try:
                     if_filter.set_frequency(_if_freq)
                     time.sleep(0.1)
                     if_power_avg, if_power_std[i] = bias.read_ifpower(average=average, stats=True)
-                    if_power[i] = if_power_avg #- param["IFOFFSET"]
+                    if_power[i] = if_power_avg  # - param["IFOFFSET"]
                     progress_bar(i[0] + 1, len(if_frequency), prefix="\tProgress: ")
             except KeyboardInterrupt:
                 print("")
@@ -834,7 +834,7 @@ try:
             if_filter.set_frequency(param['IFFREQ'])
 
             # Plot
-            plt.figure(figsize=(6,5))
+            plt.figure(figsize=(6, 5))
             plt.plot(if_frequency, if_power)
             plt.fill_between(if_frequency, if_power - if_power_std, if_power + if_power_std, alpha=0.2)
             plt.xlabel("IF frequency (GHZ)")

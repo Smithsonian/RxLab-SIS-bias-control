@@ -3,7 +3,7 @@
 
 """Interactive script for controlling the SIS bias."""
 
-import argparse
+# import argparse
 import json
 import time
 import numpy as np
@@ -173,7 +173,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet LO frequency parameter (no action)\n")
-                print("\tUseage: FREQ <freq>")
+                print("\tUsage: FREQ <freq>")
                 print("\t        F <freq>")
                 print("\twhere <freq> is the frequency in units [GHz]\n")
                 continue
@@ -199,7 +199,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet IF frequency\n")
-                print("\tUseage: IFFREQ <freq>")
+                print("\tUsage: IFFREQ <freq>")
                 print("\t        IF <freq>")
                 print("\twhere <freq> is the frequency in units [GHz]\n")
                 continue
@@ -221,7 +221,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet control voltage of channel 1\n")
-                print("\tUseage: VCTRL1 <vcontrol>")
+                print("\tUsage: VCTRL1 <vcontrol>")
                 print("\t        V1 <vcontrol>")
                 print("\twhere <vcontrol> is the voltage in units [V]\n")
                 continue
@@ -244,7 +244,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet control voltage\n")
-                print("\tUseage: VCTRL2 <vcontrol>")
+                print("\tUsage: VCTRL2 <vcontrol>")
                 print("\t        V2 <vcontrol>")
                 print("\twhere <vcontrol> is the voltage in units [V]\n")
                 continue
@@ -267,7 +267,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet bias voltage for channel 1\n")
-                print("\tUseage: VBIAS1 <vbias> <iterations>")
+                print("\tUsage: VBIAS1 <vbias> <iterations>")
                 print("\t        VB1 <vbias> <iterations>")
                 print("\twhere <vbias> is the voltage in units [mV] (default 0)")
                 print("\t      <iterations> is the number of iterations (default 3)\n")
@@ -297,7 +297,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet bias voltage for channel 2\n")
-                print("\tUseage: VBIAS2 <vbias> <iterations>")
+                print("\tUsage: VBIAS2 <vbias> <iterations>")
                 print("\t        VB2 <vbias> <iterations>")
                 print("\twhere <vbias> is the voltage in units [mV] (default 0)")
                 print("\t      <iterations> is the number of iterations (default 3)\n")
@@ -327,11 +327,12 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet minimum bias voltage (both channels)\n")
-                print("\tUseage: VBMIN <vbias>")
+                print("\tUsage: VBMIN <vbias>")
                 print("\twhere <vbias> is the voltage in units [mV] (default 0)\n")
                 continue
 
             # arg 1: target value
+            # TODO: fix weird format
             try: 
                 vbias = float(command[1])
                 param1['VMIN'] = vbias / 1000 * bias1.config['VMON']['GAIN']
@@ -349,7 +350,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet maximum bias voltage (both channels)\n")
-                print("\tUseage: VBMAX <vbias>")
+                print("\tUsage: VBMAX <vbias>")
                 print("\twhere <vbias> is the voltage in units [mV] (default 0)\n")
                 continue
 
@@ -373,7 +374,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tCalibrate IF power (both channels)\n")
-                print("\tUseage: CALIF <vbmin> <vbmax> <average>")
+                print("\tUsage: CALIF <vbmin> <vbmax> <average>")
                 print("\twhere <vbmin> is the minimum voltage for the shot noise slope, default is 12.5 mV")
                 print("\t      <vbmax> is the maximum voltage for the shot noise slope, default is 15.0 mV")
                 print("\t      <average> is the averaging, default is 1000\n")
@@ -412,15 +413,11 @@ try:
             bias2.set_control_voltage(param2['VCTRL'])
 
             # Calculate shot noise slope
-            print("\n\tCHANNEL 1:\n")
+            print("\n\tCalibrating IF power (using shot noise):\n")
             vmin = vbmin / 1000 * bias1.config['VMON']['GAIN'] 
             vmax = vbmax / 1000 * bias1.config['VMON']['GAIN'] 
-            param1["IFCORR"] = bias1.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param1["NJUNC"], extra=False, debug=True)
+            param1["IFCORR"], param2["IFCORR"] = bias1.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param1["NJUNC"], extra=False, debug=True, bias2=bias2)
             bias1.set_control_voltage(param1['VCTRL'])
-            print("\tCHANNEL 2:\n")
-            vmin = vbmin / 1000 * bias2.config['VMON']['GAIN'] 
-            vmax = vbmax / 1000 * bias2.config['VMON']['GAIN'] 
-            param2["IFCORR"] = bias2.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param2["NJUNC"], extra=False, debug=True)
             bias2.set_control_voltage(param2['VCTRL'])
 
         # CALIV: Calibrate I-V data
@@ -429,7 +426,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tCalibrate I-V offset (both channels)\n")
-                print("\tUseage: CALIV\n")
+                print("\tUsage: CALIV\n")
                 continue
 
             print("\n\tCALIBRATE I-V OFFSET (BOTH CHANNELS)\n")
@@ -449,7 +446,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure voltage monitor (both channels)\n")
-                print("\tUseage: VMON <average>")
+                print("\tUsage: VMON <average>")
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
@@ -468,7 +465,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure current monitor (both channels)\n")
-                print("\tUseage: IMON <average>")
+                print("\tUsage: IMON <average>")
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
@@ -487,7 +484,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure IF power of both channels\n")
-                print("\tUseage: PIF <average>")
+                print("\tUsage: PIF <average>")
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
@@ -506,7 +503,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure voltage, current, IF power continuously\n")
-                print("\tUseage: READ <average>")
+                print("\tUsage: READ <average>")
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
@@ -534,7 +531,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSweep control voltage (triangular wave)\n")
-                print("\tUseage: SWEEP")
+                print("\tUsage: SWEEP")
                 print("\t        S\n")
                 continue
 
@@ -563,7 +560,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tPlot IV/IF curves for tuning purposes\n")
-                print("\tUseage: TUNE")
+                print("\tUsage: TUNE")
                 print("\t        T\n")
                 continue
 
@@ -634,7 +631,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tPlot I-V/IF data in real-time (both channels)\n")
-                print("\tUseage: MONITOR <resistance>")
+                print("\tUsage: MONITOR <resistance>")
                 print("\t        MON <resistance>")
                 print("\twhere <resistance> will plot a resistance line for reference\n")
                 continue
@@ -658,11 +655,6 @@ try:
             voltage1, current1, ifpower1 = bias1.read_iv_curve_buffer()
             voltage2, current2, ifpower2 = bias2.read_iv_curve_buffer()
 
-            # Constant resistance line
-            if resistance is not None:
-                irmin = voltage1.min() / resistance * 1e3
-                irmax = voltage1.max() / resistance * 1e3
-
             # Create figure
             plt.ion()
             fig, ax1 = plt.subplots(figsize=(6, 5))
@@ -672,6 +664,8 @@ try:
             if resistance is None:
                 ax1.set_ylim([current1.min(), current1.max()])
             else:
+                irmin = voltage1.min() / resistance * 1e3
+                irmax = voltage1.max() / resistance * 1e3
                 ax1.set_ylim([irmin, irmax])
                 line0, = ax1.plot([voltage1.min(), voltage1.max()], [irmin, irmax], 'r', label=f"{resistance:.0f} ohms")
             line1, = ax1.plot([0], [0], 'b.', ms=1, label="Channel 1")
@@ -714,7 +708,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tPlot I-V/IF data in real-time (channel 1)\n")
-                print("\tUseage: MONITOR1 <resistance>")
+                print("\tUsage: MONITOR1 <resistance>")
                 print("\t        MON1 <resistance>")
                 print("\twhere <resistance> will plot a resistance line for reference\n")
                 continue
@@ -734,7 +728,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tPlot I-V/IF data in real-time (channel 2)\n")
-                print("\tUseage: MONITOR2 <resistance>")
+                print("\tUsage: MONITOR2 <resistance>")
                 print("\t        MON2 <resistance>")
                 print("\twhere <resistance> will plot a resistance line for reference\n")
                 continue
@@ -754,7 +748,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure I-V/IF curves (both channels)\n")
-                print("\tUseage: MEASURE <npts> <average> <sleeptime>")
+                print("\tUsage: MEASURE <npts> <average> <sleeptime>")
                 print("\t        M <npts> <average> <sleeptime>")
                 print("\twhere <npts> is the number of points (default 1001)")
                 print("\t      <average> is the averaging (default 64)")
@@ -862,7 +856,7 @@ try:
                     pass
 
             # Plot I-V curve
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
             ax1.plot(voltage1, current1, 'b-', label='I-V curve (ch. 1)')
             ax1.plot(voltage2, current2, 'r-', label='I-V curve (ch. 2)')
             if vmin == -vmax:
@@ -930,7 +924,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure I-V/IF curves (channel 1)\n")
-                print("\tUseage: MEASURE1 <npts> <average> <sleeptime>")
+                print("\tUsage: MEASURE1 <npts> <average> <sleeptime>")
                 print("\t        M1 <npts> <average> <sleeptime>")
                 print("\twhere <npts> is the number of points (default 1001)")
                 print("\t      <average> is the averaging (default 64)")
@@ -1015,7 +1009,7 @@ try:
                     pass
 
             # Plot I-V curve
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
             ax1.plot(voltage, current, 'k-', label='I-V curve')
             if vmin == -vmax:
                 ax1.plot(-voltage, -current, 'k-', alpha=0.5)
@@ -1067,7 +1061,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure I-V/IF curves (channel 2)\n")
-                print("\tUseage: MEASURE2 <npts> <average> <sleeptime>")
+                print("\tUsage: MEASURE2 <npts> <average> <sleeptime>")
                 print("\t        M2 <npts> <average> <sleeptime>")
                 print("\twhere <npts> is the number of points (default 1001)")
                 print("\t      <average> is the averaging (default 64)")
@@ -1152,7 +1146,7 @@ try:
                     pass
 
             # Plot I-V curve
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
             ax1.plot(voltage, current, 'k-', label='I-V curve')
             if vmin == -vmax:
                 ax1.plot(-voltage, -current, 'k-', alpha=0.5)
@@ -1204,7 +1198,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure Y-factor (both channels)\n")
-                print("\tUseage: YFAC <npts> <average> <sleeptime>")
+                print("\tUsage: YFAC <npts> <average> <sleeptime>")
                 print("\t        Y <npts> <average> <sleeptime>")
                 print("\twhere <npts> is the number of points (default 201)")
                 print("\t      <average> is the averaging (default 64)")
@@ -1353,7 +1347,7 @@ try:
             gain2 = (ph2 - pc2) / (293 - 78)
 
             # Plot I-V curve
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
             ax3 = ax2.twinx()
             ax1.plot(v, ih1, 'r', label='Hot (channel 1)')
             ax1.plot(v, ih2, 'r--', label='Hot (channel 2)')
@@ -1413,7 +1407,7 @@ try:
         #     # Print help
         #     if len(command) == 2 and command[1].upper() == "H":
         #         print("\n\tMeasure IF power versus IF frequency\n")
-        #         print("\tUseage: MEASUREIF <start> <stop> <step> <average>")
+        #         print("\tUsage: MEASUREIF <start> <stop> <step> <average>")
         #         print("\t        MIF <start> <stop> <step> <average>")
         #         print("\twhere <start> is the start frequency, in units GHz (default 3)")
         #         print("\t      <stop> is the stop frequency, in units GHz (default 25)")
@@ -1492,7 +1486,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure noise versus IF frequency\n")
-                print("\tUseage: YIF <start> <stop> <step> <average>")
+                print("\tUsage: YIF <start> <stop> <step> <average>")
                 print("\twhere <start> is the start frequency, in units GHz (default 3)")
                 print("\t      <stop> is the stop frequency, in units GHz (default 25)")
                 print("\t      <step> is the frequency step, in units GHz (default 0.1)")
@@ -1573,7 +1567,7 @@ try:
             tn[tn < 0] = 1e10
 
             # Plot
-            fig, ax1 = plt.subplots(figsize=(6,5))
+            fig, ax1 = plt.subplots(figsize=(6, 5))
             ax2 = ax1.twinx()
             ax1.fill_between(if_frequency, if_power_h - if_power_std_h, if_power_h + if_power_std_h, color='r', alpha=0.2)
             ax1.plot(if_frequency, if_power_h, 'r', label="Hot")
@@ -1607,7 +1601,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet constant control voltage and measure statistics (channel 1)\n")
-                print("\tUseage: CONST1 <vcontrol> <npts>")
+                print("\tUsage: CONST1 <vcontrol> <npts>")
                 print("\twhere <vcontrol> is the control voltage, in units [V]")
                 print("\t      <npts> is the number of sample points (default is 50,000)\n")
                 continue
@@ -1632,7 +1626,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet constant control voltage and measure statistics (channel 2)\n")
-                print("\tUseage: CONST2 <vcontrol> <npts>")
+                print("\tUsage: CONST2 <vcontrol> <npts>")
                 print("\twhere <vcontrol> is the control voltage, in units [V]")
                 print("\t      <npts> is the number of sample points (default is 50,000)\n")
                 continue
@@ -1657,7 +1651,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure the resistance of the I-V curve\n")
-                print("\tUseage: RESISTANCE")
+                print("\tUsage: RESISTANCE")
                 print("\t        R\n")
                 continue
 
@@ -1689,7 +1683,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet load to hot position\n")
-                print("\tUseage: HOT\n")
+                print("\tUsage: HOT\n")
                 continue
 
             bias2.hot_load()
@@ -1700,20 +1694,20 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet load to cold position\n")
-                print("\tUseage: COLD\n")
+                print("\tUsage: COLD\n")
                 continue
 
             bias2.cold_load()
 
         # Misc functions --------------------------------------------------- #
 
-        # ID: Print DAQ ID nubmer
+        # ID: Print DAQ ID number
         elif command[0] == "ID":
 
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tPrint ID of DAQ unit\n")
-                print("\tUseage: ID\n")
+                print("\tUsage: ID\n")
                 continue
 
             print("\n\tChannel 1: ", bias1)
@@ -1725,7 +1719,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tClear all plots\n")
-                print("\tUseage: CLEAR")
+                print("\tUsage: CLEAR")
                 print("\t        C\n")
                 continue
 
@@ -1737,7 +1731,7 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tStop bias and shutdown\n")
-                print("\tUseage: EXIT")
+                print("\tUsage: EXIT")
                 print("\t        Q\n")
                 continue
                 
