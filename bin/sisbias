@@ -859,24 +859,19 @@ try:
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet constant control voltage and measure statistics\n")
-                print("\tUseage: CONST <vcontrol> <npts>")
-                print("\twhere <vcontrol> is the control voltage, in units [V]")
-                print("\t      <npts> is the number of sample points (default is 50,000)\n")
+                print("\tUseage: CONST <npts>")
+                print("\twhere <npts> is the number of sample points (default is 50,000)\n")
                 continue
 
             print("\n\tCONSTANT CONTROL VOLTAGE:\n")
 
-            # arg 1: control voltage
-            if len(command) > 1:
-                param['VCTRL'] = float(command[1])
-
             # arg 2: number of sample points
-            if len(command) > 2:
-                npts = int(command[2])
+            if len(command) > 1:
+                npts = int(command[1])
             else:
                 npts = 50_000
 
-            bias.noise_statistics(vcontrol=param['VCTRL'], npts=npts, vlimit=param["VLIMIT"])
+            bias.noise_statistics(npts=npts, vlimit=param["VLIMIT"])
 
         # RESISTANCE: Fit resistance of I-V curve
         elif command[0] == "RESISTANCE" or command[0] == "R":

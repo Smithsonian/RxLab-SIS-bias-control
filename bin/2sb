@@ -3,7 +3,7 @@
 
 """Interactive script for controlling the SIS bias."""
 
-# import argparse
+import argparse
 import json
 import time
 import numpy as np
@@ -24,6 +24,11 @@ except OSError:
     print("Matplot styles not found")
     print("\ttry: pip install SciencePlots")
 
+# Grab arguments
+parser = argparse.ArgumentParser(description="Control 2SB system.")
+parser.add_argument("--filteraddr", type=str, help="YIG filter IP address", default=None)
+args = parser.parse_args()
+
 # ----------------------------------------------------------------------------
 
 daq_id1 = "01D87C3C"
@@ -35,7 +40,8 @@ param_filename2 = user_config_dir("2sb-mixer2.param")
 cal_filename1 = user_config_dir("2sb-mixer1.cal")
 cal_filename2 = user_config_dir("2sb-mixer2.cal")
         
-filteraddr = "192.168.1.15"
+# filteraddr = "192.168.1.15"
+filteraddr = args.filteraddr
 
 with open(param_filename1) as _fin:
     param1 = json.load(_fin)
@@ -50,12 +56,10 @@ try:
     bias1 = SISBias(config_file=config_filename1, cal_file=cal_filename1, daq_id=daq_id1, name="Channel 1")
     bias2 = SISBias(config_file=config_filename2, cal_file=cal_filename2, daq_id=daq_id2, name="Channel 2")
     
-    # Set bias voltage to zero
-    param1['VCTRL'] = 0
-    param2['VCTRL'] = 0
-    bias1.set_control_voltage(param1['VCTRL'])
-    bias2.set_control_voltage(param2['VCTRL'])
-    print("\nBias voltage set to 0 V (both channels)")
+    # Set bias voltage
+    bias1.set_control_voltage(param1['VCTRL'], verbose=True)
+    bias2.set_control_voltage(param2['VCTRL'], verbose=True)
+    print("")
 
     # Save voltage / current gain to param (from config file)
     param1["VMONGAIN"] = bias1.config['VMON']['GAIN']
@@ -69,7 +73,7 @@ try:
 
     # Connect to IF filter
     if filteraddr is not None:
-        print(f"\nConnecting to IF YIG filter (IP: {filteraddr})...", end=" ")
+        print(f"Connecting to IF YIG filter (IP: {filteraddr})...", end=" ")
         if_filter = YigFilter(filteraddr)
         if_filter.set_frequency(param1['IFFREQ'])
         print("done")
@@ -1595,55 +1599,25 @@ try:
                 with open(filename + ".mdat", "w") as fout:
                     json.dump(param1, fout, indent=4)
 
-        # CONST1: Set constant bias and monitor V + I
-        elif command[0] == "CONST1":
+        # CONST: Set constant bias and monitor V + I
+        elif command[0] == "CONST":
 
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tSet constant control voltage and measure statistics (channel 1)\n")
-                print("\tUsage: CONST1 <vcontrol> <npts>")
-                print("\twhere <vcontrol> is the control voltage, in units [V]")
-                print("\t      <npts> is the number of sample points (default is 50,000)\n")
+                print("\tUsage: CONST <npts>")
+                print("\twhere <npts> is the number of sample points (default is 50,000)\n")
                 continue
 
-            print("\n\tCONSTANT CONTROL VOLTAGE (CHANNEL 1):\n")
+            print("\n\tCONSTANT CONTROL VOLTAGE:\n")
 
-            # arg 1: control voltage
+            # arg 1: number of sample points
             if len(command) > 1:
-                param1['VCTRL'] = float(command[1])
-
-            # arg 2: number of sample points
-            if len(command) > 2:
-                npts = int(command[2])
+                npts = int(command[1])
             else:
                 npts = 50_000
 
-            bias1.noise_statistics(vcontrol=param1['VCTRL'], npts=npts, vlimit=param1["VLIMIT"])
-
-        # CONST2: Set constant bias and monitor V + I
-        elif command[0] == "CONST2":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tSet constant control voltage and measure statistics (channel 2)\n")
-                print("\tUsage: CONST2 <vcontrol> <npts>")
-                print("\twhere <vcontrol> is the control voltage, in units [V]")
-                print("\t      <npts> is the number of sample points (default is 50,000)\n")
-                continue
-
-            print("\n\tCONSTANT CONTROL VOLTAGE (CHANNEL 2):\n")
-
-            # arg 1: control voltage
-            if len(command) > 1:
-                param2['VCTRL'] = float(command[1])
-
-            # arg 2: number of sample points
-            if len(command) > 2:
-                npts = int(command[2])
-            else:
-                npts = 50_000
-
-            bias2.noise_statistics(vcontrol=param2['VCTRL'], npts=npts, vlimit=param2["VLIMIT"])
+            bias1.noise_statistics(npts=npts, vlimit=param1["VLIMIT"], bias2=bias2)
 
         # RESISTANCE: Fit resistance of I-V curve
         elif command[0] == "RESISTANCE" or command[0] == "R":
