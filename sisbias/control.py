@@ -1020,7 +1020,12 @@ class SISBias:
                     current2[i] = bias2.read_current(average=1)
                     ifpower2[i] = bias2.read_ifpower(average=1)
                 if i % 1000 == 0 or i + 1 == npts:
-                    progress_bar(i + 1, npts, prefix="\tProgress: ")
+                    if i == 1000:
+                        t_first_1000 = time.time() - start
+                        t_guess = t_first_1000 * npts / 1000 
+                        print(f"\tEst. meas. time: {t_guess:.0f} s / {t_guess/60:.0f} min / {t_guess/3600:.0f} hrs\n")
+                    if i > 0:
+                        progress_bar(i + 1, npts, prefix="\tProgress: ")
             total_time = time.time() - start
             t = np.linspace(0, total_time, npts)
             ifpower1 *= 10  # TODO: where does this come from?
