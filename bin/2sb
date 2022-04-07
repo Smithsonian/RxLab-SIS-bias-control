@@ -1284,7 +1284,7 @@ try:
             # Then do channel 2
             print("\n\tCHANNEL 2:\n")
             bias1.set_control_voltage(param1['VCTRL'])
-            print(f"\tBias voltage (ch. 1) set to {param2['VCTRL']*1000/bias1.config['VMON']['GAIN']:.2f} mV\n")
+            print(f"\tBias voltage (ch. 1) set to {param1['VCTRL']*1000/bias1.config['VMON']['GAIN']:.2f} mV\n")
 
             # Hot load
             bias2.hot_load()
