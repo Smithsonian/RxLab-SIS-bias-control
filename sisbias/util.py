@@ -3,7 +3,7 @@
 import os
 
 
-def progress_bar(iteration, total, prefix='', length=50):
+def progress_bar(iteration, total, prefix='', suffix='', length=50):
     """Print progress bar.
 
     Args:
@@ -17,7 +17,7 @@ def progress_bar(iteration, total, prefix='', length=50):
     percent = "{:.1f}".format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = "X" * filledLength + '-' * (length - filledLength)
-    print(f"\r{prefix} |{bar}| {percent}%", end="\r")
+    print(f"\r{prefix} |{bar}| {percent}% {suffix}", end="\r")
     if iteration == total: 
         print("")
 
