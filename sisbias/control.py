@@ -976,18 +976,18 @@ class SISBias:
                 print(f"\n\tControl voltage returned to {vctrl:.2f} V.\n")
                 break
 
-    def noise_statistics(self, npts=50000, vlimit=5, bias2=None):
-        """Set control voltage to a constant value and then measure read-out statistics.
+    def noise_statistics(self, npts=50000, bias2=None):
+        """Set control voltage to a constant value and then read-out monitors continuously.
+
+        This method can help to measure fluctuations over time or interference.
 
         Args:
-            vcontrol (float): control voltage value, in [V], default is 0
             npts (int): number of points, default is 50000
-            vlimit (float): hard limit on control voltage, in [V], default in 5
             bias2 (sisbias.SISBias): analyze a second bias system at the same time, default is None
 
         """
 
-        # Set constant bias voltage
+        # Read starting monitor values
         vmon = self.read_voltage(average=100)
         imon = self.read_current(average=100)
         if bias2:
@@ -1001,8 +1001,9 @@ class SISBias:
             print(f"\tVoltage monitor: {vmon:4.1f} mV")
             print(f"\tCurrent monitor: {imon:4.1f} uA\n")
 
-        # Sample voltage/current monitors
+        # Sample voltage/current/power monitors
         try:
+            time_start = time.time()
             voltage1 = np.zeros(npts)
             current1 = np.zeros(npts)
             ifpower1 = np.zeros(npts)
@@ -1010,7 +1011,8 @@ class SISBias:
                 voltage2 = np.zeros(npts)
                 current2 = np.zeros(npts)
                 ifpower2 = np.zeros(npts)
-            start = time.time()
+
+            # Read monitors
             for i in range(npts):
                 voltage1[i] = self.read_voltage(average=1)
                 current1[i] = self.read_current(average=1)
@@ -1019,22 +1021,50 @@ class SISBias:
                     voltage2[i] = bias2.read_voltage(average=1)
                     current2[i] = bias2.read_current(average=1)
                     ifpower2[i] = bias2.read_ifpower(average=1)
+
                 if i % 1000 == 0 or i + 1 == npts:
+
+                    # Use first 1000 samples to guess how long it will take
                     if i == 1000:
-                        t_first_1000 = time.time() - start
+                        t_first_1000 = time.time() - time_start
                         t_guess = t_first_1000 * npts / 1000 
                         print(f"\tEst. meas. time: {t_guess:.0f} s / {t_guess/60:.0f} min / {t_guess/3600:.0f} hrs\n")
+
+                    # Print progress bar with current pump level
                     if i > 0:
-                        progress_bar(i + 1, npts, prefix="\tProgress: ")
-            total_time = time.time() - start
-            t = np.linspace(0, total_time, npts)
-            ifpower1 *= 10  # TODO: where does this come from?
-            if bias2:
-                ifpower2 *= 10
+                        if bias2:
+                            str_i1 = f'{current1[i]:.0f}'
+                            str_i2 = f'{current2[i]:.0f}'
+                            suffix = f' - {current1[i]:.0f} / {current2[i]:.0f} uA'
+                        else:
+                            suffix = f' - {current1[i]:.0f} uA'
+                        progress_bar(i + 1, npts, prefix="\tProgress: ", suffix=suffix)
+
         except KeyboardInterrupt:
-            print("")
-            plt.close('all')
-            return
+            pass
+
+        # truncate data if the sweep is cut short
+        if i + 1 < npts:
+            voltage1 = voltage1[:i]
+            current1 = current1[:i]
+            ifpower1 = ifpower1[:i]
+            if bias2:
+                voltage2 = voltage2[:i]
+                current2 = current2[:i]
+                ifpower2 = ifpower2[:i]
+            npts = i
+
+        time_end = time.time()
+        total_time = time_end - time_start
+        # approx time samples (assuming even sampling)
+        t = np.linspace(0, total_time, npts)
+        # in Linux time
+        time_out = np.linspace(time_start, time_end, npts)
+
+        # TODO: where does this come from?
+        ifpower1 *= 10
+        if bias2:
+            ifpower2 *= 10
 
         # Print statistics
         print("")
@@ -1066,38 +1096,26 @@ class SISBias:
             print("\t\tMean:               {:7.3f} K".format(np.mean(ifpower2)))
             print("\t\tStandard deviation: {:7.3f} K".format(np.std(ifpower2)))
             print("\t\t                    {:7.1f} % ".format(np.std(ifpower2)/np.mean(ifpower2)*100))
-        print("\n\tSampling frequency: {:.1f} kHz".format(npts*2/total_time/1e3))
-        print("\n\tTotal time:         {:.1f} s\n".format(total_time))
+        print("\n\tSampling frequency: {:7.1f} kHz".format(npts/total_time/1e3))
+        print("\n\tNumber of points:   {:7.0f}".format(npts))
+        print("\n\tTotal time:         {:7.1f} s".format(total_time))
+        print("\n\t                    {:7.1f} min\n".format(total_time / 60))
 
         # Plot
         fig, ((ax1, ax3, ax5), (ax2, ax4, ax6)) = plt.subplots(2, 3, figsize=(15, 8))
-        ax1.plot(t, voltage1, 'k', lw=0.5, alpha=0.2)
-        ax1.plot(t, gauss_conv(voltage1, 3), 'r')
-        # ax1.axhspan(-np.std(voltage1)+np.mean(voltage1), np.std(voltage1)+np.mean(voltage1), color='r', alpha=0.2)
-        ax3.plot(t, current1, 'k', lw=0.5, alpha=0.2)
-        ax3.plot(t, gauss_conv(current1, 3), 'r')
-        # ax3.axhspan(-np.std(current1)+np.mean(current1), np.std(current1)+np.mean(current1), color='r', alpha=0.2)
-        ax5.plot(t, ifpower1, 'k', lw=0.5, alpha=0.2)
-        ax5.plot(t, gauss_conv(ifpower1, 3), 'r')
-        # ax5.axhspan(-np.std(ifpower1)+np.mean(ifpower1), np.std(ifpower1)+np.mean(ifpower1), color='r', alpha=0.2)
+        ax1.plot(t, voltage1, 'k', lw=0.5, alpha=0.15)
+        ax1.plot(t, gauss_conv(voltage1, 3), 'r', label="Channel 1")
+        ax3.plot(t, current1, 'k', lw=0.5, alpha=0.15)
+        ax3.plot(t, gauss_conv(current1, 3), 'r', label="Channel 1")
+        ax5.plot(t, ifpower1, 'k', lw=0.5, alpha=0.15)
+        ax5.plot(t, gauss_conv(ifpower1, 3), 'r', label="Channel 1")
         if bias2:
-            ax1.plot(t, gauss_conv(voltage2, 3), 'b')
-            # ax1.axhspan(-np.std(voltage2)+np.mean(voltage2), np.std(voltage2)+np.mean(voltage2), color='b', alpha=0.2)
-            ax3.plot(t, current2, 'k', lw=0.5, alpha=0.2)
-            ax3.plot(t, gauss_conv(current2, 3), 'b')
-            # ax3.axhspan(-np.std(current2)+np.mean(current2), np.std(current2)+np.mean(current2), color='b', alpha=0.2)
-            ax5.plot(t, ifpower2, 'k', lw=0.5, alpha=0.2)
-            ax5.plot(t, gauss_conv(ifpower2, 3), 'b')
-            # ax5.axhspan(-np.std(ifpower2)+np.mean(ifpower2), np.std(ifpower2)+np.mean(ifpower2), color='b', alpha=0.2)
-
-        # Zero
-        voltage1 -= np.mean(voltage1)
-        current1 -= np.mean(current1)
-        ifpower1 -= np.mean(ifpower1)
-        if bias2:
-            voltage2 -= np.mean(voltage2)
-            current2 -= np.mean(current2)
-            ifpower2 -= np.mean(ifpower2)
+            ax1.plot(t, voltage2, 'k', lw=0.5, alpha=0.15)
+            ax1.plot(t, gauss_conv(voltage2, 3), 'b', label="Channel 2")
+            ax3.plot(t, current2, 'k', lw=0.5, alpha=0.15)
+            ax3.plot(t, gauss_conv(current2, 3), 'b', label="Channel 2")
+            ax5.plot(t, ifpower2, 'k', lw=0.5, alpha=0.15)
+            ax5.plot(t, gauss_conv(ifpower2, 3), 'b', label="Channel 2")
 
         # FFT
         voltage1_fft = np.fft.fftshift(np.fft.fft(voltage1))
@@ -1129,22 +1147,22 @@ class SISBias:
             print(f"\t\tPeak IF power: {np.abs(ifpower2_fft[idx]):12.1f} at {abs(f2[idx]):4.1f} Hz\n")
 
         # Plot
-        ax2.plot(f1, np.abs(voltage1_fft), 'k', lw=0.5, alpha=0.2)
-        ax2.plot(f1, gauss_conv(np.abs(voltage1_fft), 3), 'r', lw=2)
+        ax2.loglog(f1, np.abs(voltage1_fft), 'k', lw=0.5, alpha=0.2)
+        ax2.loglog(f1, gauss_conv(np.abs(voltage1_fft), 3), 'r', lw=2)
         ax2.axvspan(55, 65, color='r', alpha=0.2)
-        ax4.plot(f1, np.abs(current1_fft), 'k', lw=0.5, alpha=0.2)
-        ax4.plot(f1, gauss_conv(np.abs(current1_fft), 3), 'r', lw=2)
+        ax4.loglog(f1, np.abs(current1_fft), 'k', lw=0.5, alpha=0.2)
+        ax4.loglog(f1, gauss_conv(np.abs(current1_fft), 3), 'r', lw=2)
         ax4.axvspan(55, 65, color='r', alpha=0.2)
-        ax6.plot(f1, np.abs(ifpower1_fft), 'k', lw=0.5, alpha=0.5)
-        ax6.plot(f1, gauss_conv(np.abs(ifpower1_fft), 1), 'r', lw=2)
+        ax6.loglog(f1, np.abs(ifpower1_fft), 'k', lw=0.5, alpha=0.5)
+        ax6.loglog(f1, gauss_conv(np.abs(ifpower1_fft), 1), 'r', lw=2)
         ax6.axvspan(1.1, 1.3, color='r', alpha=0.2)
         if bias2:
-            ax2.plot(f2, np.abs(voltage2_fft), 'k', lw=0.5, alpha=0.2)
-            ax2.plot(f2, gauss_conv(np.abs(voltage2_fft), 3), 'b', lw=2)
-            ax4.plot(f2, np.abs(current2_fft), 'k', lw=0.5, alpha=0.2)
-            ax4.plot(f2, gauss_conv(np.abs(current2_fft), 3), 'b', lw=2)
-            ax6.plot(f2, np.abs(ifpower2_fft), 'k', lw=0.5, alpha=0.5)
-            ax6.plot(f2, gauss_conv(np.abs(ifpower2_fft), 1), 'b', lw=2)
+            ax2.loglog(f2, np.abs(voltage2_fft), 'k', lw=0.5, alpha=0.2)
+            ax2.loglog(f2, gauss_conv(np.abs(voltage2_fft), 3), 'b', lw=2)
+            ax4.loglog(f2, np.abs(current2_fft), 'k', lw=0.5, alpha=0.2)
+            ax4.loglog(f2, gauss_conv(np.abs(current2_fft), 3), 'b', lw=2)
+            ax6.loglog(f2, np.abs(ifpower2_fft), 'k', lw=0.5, alpha=0.5)
+            ax6.loglog(f2, gauss_conv(np.abs(ifpower2_fft), 1), 'b', lw=2)
         ax1.set_xlabel("Time (s)")
         ax3.set_xlabel("Time (s)")
         ax5.set_xlabel("Time (s)")
@@ -1160,13 +1178,15 @@ class SISBias:
         ax1.set_xlim([0, t.max()])
         ax3.set_xlim([0, t.max()])
         ax5.set_xlim([0, t.max()])
-        ax2.set_xlim([0, 300])
-        ax4.set_xlim([0, 300])
-        ax6.set_xlim([-1, 5])
-        ax2.set_ylim(ymin=0)
-        ax4.set_ylim(ymin=0)
-        ax6.set_ylim(ymin=0)
+        ax2.set_xlim([0.1, npts/total_time/2])
+        ax4.set_xlim([0.1, npts/total_time/2])
+        ax6.set_xlim([0.1, npts/total_time/2])
         plt.show()
+
+        if bias2:
+            return np.vstack((time_out, voltage1, current1, ifpower1, voltage2, current2, ifpower2)).T
+        else:
+            return np.vstack((time_out, voltage1, current1, ifpower1)).T
 
     # Digital input / output --------------------------------------------- ###
 
@@ -1251,10 +1271,8 @@ class SISBias:
 
                 # Stop the scan
                 if self.daq_device.is_connected() and self.has_ao_pacer:
-                    print("update scan")
                     self.update_ao_scan_status()
                 if self.daq_device.is_connected() and self._ao_scan_status == ScanStatus.RUNNING:
-                    print("stop scan")
                     self.ao_device.scan_stop()
                 if self.daq_device.is_connected():
                     self.set_control_voltage(0)
