@@ -1617,7 +1617,16 @@ try:
             else:
                 npts = 50_000
 
-            bias1.noise_statistics(npts=npts, vlimit=param1["VLIMIT"], bias2=bias2)
+            results = bias1.noise_statistics(npts=npts, bias2=bias2)
+
+            # Save data
+            filename = ask_filename()
+            if filename is None:
+                print("\tNot any saving data.\n")
+            else:
+                # Save data
+                header = "Time, Voltage 1 (mV), Current 1 (uA), IF Power 1 (K), Voltage 2 (mV), Current 2 (uA), IF Power 2 (K)"
+                np.savetxt(filename + ".dat", results, header=header)
 
         # RESISTANCE: Fit resistance of I-V curve
         elif command[0] == "RESISTANCE" or command[0] == "R":
