@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import uldaq
 from appdirs import user_config_dir
-from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag, DaqDevice, DigitalDirection, 
+from scipy.optimize import minimize
+from uldaq import (AiInputMode, AInFlag, AInScanFlag, AOutFlag, AOutScanFlag, DaqDevice, DigitalDirection,
                    InterfaceType, Range, ScanOption, ScanStatus, create_float_buffer,
                    get_daq_device_inventory)
-from scipy.optimize import minimize
 
 from sisbias.filters import gauss_conv
 from sisbias.util import progress_bar
@@ -37,8 +37,6 @@ class SISBias:
             is None
 
     """
-    
-    # TODO: add method for vctrl -> vbias and vbias -> vctrl
     
     def __init__(self, config_file=None, cal_file=None, daq_id=None, name=None, interface='usb'):
         
@@ -225,7 +223,7 @@ class SISBias:
         if vstart is not None:
             vctrl = vstart
         else:
-            vctrl = vbias / 1000 * self.config['VMON']['GAIN']
+            vctrl = self.bias_to_control_voltage(vbias)
         self.set_control_voltage(vctrl, vlimit=vlimit)
         time.sleep(sleep_time)
 
@@ -359,8 +357,8 @@ class SISBias:
                                          SCAN_FLAGS, output_buffer)
 
         if verbose:
-            vbmin = vmin / self.config['VMON']['GAIN'] * 1000
-            vbmax = vmax / self.config['VMON']['GAIN'] * 1000
+            vbmin = self.control_to_bias_voltage(vmin)
+            vbmax = self.control_to_bias_voltage(vmax)
             print("\n\tSweep control voltage:")
             print(f'\t\t{self.daq_name}: ready')
             print(f'\t\tDAC range:             {self.ao_range.name}')
@@ -371,6 +369,36 @@ class SISBias:
             print(f'\t\tSweep period:          {sweep_period:.1f} s')
             print(f'\t\tSampling frequency:    {sample_frequency:.1f} Hz')
             print(f'\t\tSampling frequency:    {rate:.1f} Hz (actual)')
+
+    def control_to_bias_voltage(self, vctrl):
+        """Convert control voltage to bias voltage.
+
+        I.e., the voltage coming from the DAQ.
+
+        Args:
+            vctrl (float): control voltage, in [V]
+
+        Returns:
+            float: bias voltage, in [mV]
+
+        """
+
+        return vctrl * 1000 / self.config['VMON']['GAIN']
+
+    def bias_to_control_voltage(self, vbias):
+        """Convert bias voltage to control voltage.
+
+        I.e., the voltage across the SIS junction.
+
+        Args:
+            vbias (float): bias voltage, in [mV]
+
+        Returns:
+            float: control voltage, in [V]
+
+        """
+
+        return vbias / 1000 * self.config['VMON']['GAIN']
 
     # Read voltage & current monitor ------------------------------------- ###
 
@@ -1003,16 +1031,18 @@ class SISBias:
             print(f"\tCurrent monitor: {imon:4.1f} uA\n")
 
         # Sample voltage/current/power monitors
+        i = 0
+        time_start = time.time()
+        voltage1 = np.zeros(npts)
+        current1 = np.zeros(npts)
+        ifpower1 = np.zeros(npts)
+        if bias2:
+            voltage2 = np.zeros(npts)
+            current2 = np.zeros(npts)
+            ifpower2 = np.zeros(npts)
+        else:
+            voltage2, current2, ifpower2 = None, None, None
         try:
-            time_start = time.time()
-            voltage1 = np.zeros(npts)
-            current1 = np.zeros(npts)
-            ifpower1 = np.zeros(npts)
-            if bias2:
-                voltage2 = np.zeros(npts)
-                current2 = np.zeros(npts)
-                ifpower2 = np.zeros(npts)
-
             # Read monitors
             for i in range(npts):
                 voltage1[i] = self.read_voltage(average=1)
@@ -1034,8 +1064,6 @@ class SISBias:
                     # Print progress bar with current pump level
                     if i > 0:
                         if bias2:
-                            str_i1 = f'{current1[i]:.0f}'
-                            str_i2 = f'{current2[i]:.0f}'
                             suffix = f' - {current1[i]:.0f} / {current2[i]:.0f} uA'
                         else:
                             suffix = f' - {current1[i]:.0f} uA'
@@ -1062,7 +1090,7 @@ class SISBias:
         # in Linux time
         time_out = np.linspace(time_start, time_end, npts)
 
-        # TODO: where does this come from?
+        # assuming IF power range is 10uW
         ifpower1 *= 10
         if bias2:
             ifpower2 *= 10
@@ -1128,6 +1156,9 @@ class SISBias:
             current2_fft = np.fft.fftshift(np.fft.fft(current2))
             ifpower2_fft = np.fft.fftshift(np.fft.fft(ifpower2))
             f2 = np.fft.fftshift(np.fft.fftfreq(len(voltage2), d=t[1]-t[0]))
+        else:
+            f2 = None
+            voltage2_fft, current2_fft, ifpower2_fft = None, None, None
 
         # Peak values
         if bias2:
