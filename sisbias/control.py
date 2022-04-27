@@ -106,8 +106,9 @@ class SISBias:
             try:
                 descriptor_index = id_list.index(daq_id)
             except ValueError:
-                print("Specified DAQ is not found.")
-                raise ValueError
+                print(f"\n\t**Specified DAQ ({daq_id}) not found.**\n")
+                raise DAQNotFoundError
+                # raise e
             
         # Create the DAQ device object
         self.daq_device = DaqDevice(devices[descriptor_index])
@@ -451,7 +452,7 @@ class SISBias:
         """Read IF power from power meter/detector.
 
         Returns:
-            IF power in A.U.
+            IF power
 
         """
 
@@ -726,8 +727,8 @@ class SISBias:
         """Calibrate IF power using shot noise slope.
 
         Args:
-            vmin (float): minimum control voltage, in [V], default is 2.5
-            vmax (float): maximum control voltage, in [V], default is 3.0
+            vmin (float): minimum control voltage, in [V], default is 1.0
+            vmax (float): maximum control voltage, in [V], default is 1.5
             average (int): averaging, default is 1000
             npts (int): number of points, default is 10
             sleep_time (float): time to sleep between points, default is 0.2
@@ -1178,9 +1179,9 @@ class SISBias:
         ax1.set_xlim([0, t.max()])
         ax3.set_xlim([0, t.max()])
         ax5.set_xlim([0, t.max()])
-        ax2.set_xlim([0.1, npts/total_time/2])
-        ax4.set_xlim([0.1, npts/total_time/2])
-        ax6.set_xlim([0.1, npts/total_time/2])
+        ax2.set_xlim([1/total_time*2, npts/total_time/2])
+        ax4.set_xlim([1/total_time*2, npts/total_time/2])
+        ax6.set_xlim([1/total_time*2, npts/total_time/2])
         plt.show()
 
         if bias2:
@@ -1292,3 +1293,9 @@ class SISBias:
         """Stop DAQ device and close all connections."""
         
         self.close()
+
+
+class DAQNotFoundError(Exception):
+    """Error for when the DAQ can't be found."""
+    pass
+

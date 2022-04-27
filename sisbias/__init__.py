@@ -1,4 +1,4 @@
-from .control import SISBias
+from .control import SISBias, DAQNotFoundError
 from .util import progress_bar, ask_filename
 
 __author__ = "John Garrett"
