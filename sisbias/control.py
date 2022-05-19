@@ -476,7 +476,7 @@ class SISBias:
         else:
             return imon_avg
     
-    def read_ifpower(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False, msg=None):
+    def read_ifpower(self, average=1000, calibrate=True, offset_only=False, stats=False, verbose=False, msg=None):
         """Read IF power from power meter/detector.
 
         Returns:
@@ -490,24 +490,37 @@ class SISBias:
             self.ai_device.scan_stop()
 
         # Sample IF power
-        pif = np.zeros(average)
+        pif_raw = np.zeros(average)
         for i in range(average):
-            pif[i] = self._read_analog(self.config['PIF']['AI_CHANNEL'])
+            pif_raw[i] = self._read_analog(self.config['PIF']['AI_CHANNEL'])
 
-        # Calibrate
-        if calibrate and not raw:
-            pif = (pif - self.cal['IFOFFSET']) * self.cal['IFCORR']
+        # Remove power offset
+        pif_offset = pif_raw - self.cal['IFOFFSET']
 
-        pif_avg, pif_std = np.mean(pif), np.std(pif)
+        # Calibrate: [AU] -> [K]
+        pif_cal = pif_offset * self.cal['IFCORR']
+        
+        # Choose which value to return
+        if offset_only:
+            pif = pif_offset
+        elif calibrate:
+            pif = pif_cal
+        else:
+            pif = pif_raw
+
         if verbose:
             if msg is None:
-                msg = "\n\tIF power"
-            print(f"{msg}: {pif_avg:.3f} +/- {pif_std:.3f} K\n")
+                print("\n\tIF power")
+            else:
+                print(msg)
+            print(f"\t\t- raw:              {np.mean(pif_raw*10):8.3f} +/- {np.std(pif_raw*10):8.3f} AU (x10)")
+            print(f"\t\t- offset corrected: {np.mean(pif_offset*10):8.3f} +/- {np.std(pif_offset*10):8.3f} AU (x10)")
+            print(f"\t\t- calibrated:       {np.mean(pif_cal):8.3f} +/- {np.std(pif_cal):8.3f} K\n")
 
         if stats:
-            return pif_avg, pif_std
+            return np.mean(pif), np.std(pif)
         else:
-            return pif_avg
+            return np.mean(pif)
 
     def read_all(self, average=1000, raw=False, calibrate=True, stats=False, verbose=False):
 
@@ -730,7 +743,7 @@ class SISBias:
 
         # Calculate IF power offset
         if wait1:
-            _ = input("\n\tTurn warm LNA off. Press enter when ready.")
+            _ = input("\n\t\t** Turn warm LNA off. Press enter when ready. **")
         self.set_control_voltage(-vcontrol)
         time.sleep(0.2)
         if_offset1 = self.read_ifpower(average=average, calibrate=False)
@@ -746,7 +759,7 @@ class SISBias:
             print(f"  \tNew IF offset:  {new_ifoffset:7.4f} AU")
             print(f"  \t-> change:      {change:7.1f} %\n")
         if wait2:
-            _ = input("\tTurn warm LNA back on. Press enter when ready.")
+            _ = input("\t\t** Turn warm LNA back on. Press enter when ready. **")
 
         return self.cal['IFOFFSET']
 
