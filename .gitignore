@@ -7,3 +7,5 @@ __pycache__/
 mcc-examples/
 misc/
 old/
+
+bin/2SB-old.py
