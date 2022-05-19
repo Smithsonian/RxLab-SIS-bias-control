@@ -88,16 +88,19 @@ try:
 
     # Connect to IF filters and set to previous frequency
     print("Connecting to IF filter 1...")
-    if_filter1 = YigFilter("192.168.1.12", f_adjust=0.000)  # TWEAK
+    if_filter1 = YigFilter("192.168.1.12", f_adjust=0.000)
     print("Connecting to IF filter 2...")
-    if_filter2 = YigFilter("192.168.1.15", f_adjust=0.000)  # TWEAK
+    if_filter2 = YigFilter("192.168.1.15", f_adjust=0.000)
     time.sleep(1)  # TODO: is this needed?
     if_filter1.set_frequency(param1['IFFREQ'])
     if_filter2.set_frequency(param1['IFFREQ'])
 
-    # # Connect to synthesizer for tone injection
-    # print("Connecting to frequency synthesizer...")
-    # tone_synth = Hittite("192.168.1.31", f_adjust=0.000)  # TWEAK
+    # Connect to synthesizer for tone injection
+    print("Connecting to frequency synthesizer...")
+    try:
+        tone_synth = Hittite("192.168.1.31", timeout=1, f_adjust=0.000)
+    except:
+        pass
 
     print("\nRemember to specify measurement parameters:")
     print("\t-device, njunc, icoil, freq, etc.\n")
@@ -469,90 +472,6 @@ try:
 
             _ = bias1.read_ifpower(average=average, verbose=True, msg="\n\tIF power (channel 1)")
             _ = bias2.read_ifpower(average=average, verbose=True, msg="\tIF power (channel 2)")
-
-        # Sweep control voltage -------------------------------------------- #
-
-        # SWEEP: Sweep control voltage (triangle wave)
-        elif command[0] == "S":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tSweep control voltage (triangular wave)\n")
-                print("\tUsage: SWEEP")
-                print("\t        S\n")
-                continue
-
-            print("\n\tSWEEP CONTROL VOLTAGES")
-            bias1.sweep_control_voltage(vmin=param1['VMIN'],
-                                        vmax=param1['VMAX'],
-                                        sweep_period=param1['PERIOD'],
-                                        npts=param1['NPTS'],
-                                        vlimit=param1['VLIMIT'])
-            bias2.sweep_control_voltage(vmin=param2['VMIN'],
-                                        vmax=param2['VMAX'],
-                                        sweep_period=param2['PERIOD'],
-                                        npts=param2['NPTS'],
-                                        vlimit=param2['VLIMIT'])
-            bias1.start_iv_monitor_scan(sweep_period=param1['PERIOD'],
-                                        npts=param1['NPTS'])
-            bias2.start_iv_monitor_scan(sweep_period=param2['PERIOD'],
-                                        npts=param2['NPTS'])
-            print("")
-
-        # RESISTANCE: Fit resistance of I-V curve
-        elif command[0] == "RESISTANCE" or command[0] == "R":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure the resistance of the I-V curve\n")
-                print("\tUsage: RESISTANCE")
-                print("\t        R\n")
-                continue
-
-            print("\n\tMEASURE RESISTANCE:")
-
-            # Parameters
-            npts = 10
-            sleep_time = 0.1
-            average = 10
-            vmin, vmax = param1["VMIN"], param1["VMAX"]
-            vbmin = vmin * 1000 / bias1.config['VMON']['GAIN']
-            vbmax = vmax * 1000 / bias1.config['VMON']['GAIN']
-            vctrl_sweep = np.linspace(vmin, vmax, npts)
-            print(f"\n\tControl voltage sweep: {vmin:5.1f} to {vmax:5.1f} V")
-            print(f"  \tBias voltage sweep:    {vbmin:5.1f} to {vbmax:5.1f} mV\n")
-
-            # Sweep bias voltage and measure voltage / current / IF power
-            try:
-                voltage1, voltage2 = np.zeros(npts), np.zeros(npts)
-                current1, current2 = np.zeros(npts), np.zeros(npts)
-                for i, _vctrl in np.ndenumerate(vctrl_sweep):
-                    bias1.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
-                    bias2.set_control_voltage(_vctrl, vlimit=param2['VLIMIT'])
-                    time.sleep(sleep_time)
-                    voltage1[i], current1[i], _ = bias1.read_all(average=average)
-                    voltage2[i], current2[i], _ = bias2.read_all(average=average)
-                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
-            except KeyboardInterrupt:
-                print("")
-                plt.close('all')
-                continue
-            bias1.set_control_voltage(param1['VCTRL'])
-            bias2.set_control_voltage(param2['VCTRL'])
-            print("")
-
-            # Sort by voltage
-            idx = voltage1.argsort()
-            voltage1, current1 = voltage1[idx], current1[idx]
-            idx = voltage2.argsort()
-            voltage2, current2 = voltage2[idx], current2[idx]
-
-            p1, cov1 = np.polyfit(current1*1e-6, voltage1*1e-3, 1, cov=True)
-            p2, cov2 = np.polyfit(current2*1e-6, voltage2*1e-3, 1, cov=True)
-            perr1 = np.sqrt(np.diag(cov1))
-            perr2 = np.sqrt(np.diag(cov2))
-            print(f"\tResistance: {p1[0]:6.2f} +/- {perr1[0]:4.2f} ohms (channel 1)")
-            print(f"\t            {p2[0]:6.2f} +/- {perr2[0]:4.2f} ohms (channel 2)\n")
 
         # Measure IV / IF data --------------------------------------------- #
 
@@ -1123,150 +1042,6 @@ try:
             bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
             print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
 
-        # YIF: Measure Y-factor vs IF frequency
-        elif command[0] == "YIF":
-
-            # Print help
-            if len(command) == 2 and command[1].upper() == "H":
-                print("\n\tMeasure Y-factor versus IF frequency\n")
-                print("\tUseage: YIF <start> <stop> <step> <average>")
-                print("\twhere <start> is the start frequency, in units GHz (default 3)")
-                print("\t      <stop> is the stop frequency, in units GHz (default 25)")
-                print("\t      <step> is the frequency step, in units GHz (default 0.1)")
-                print("\t      <average> is the number of points to average (default 100)\n")
-                continue
-
-            print("\n\tMEASURE Y-FACTOR VS IF FREQUENCY:\n")
-
-            # arg 1: start
-            if len(command) > 1:
-                start = float(command[1])
-            else:
-                start = 3.0
-
-            # arg 2: stop
-            if len(command) > 2:
-                stop = float(command[2])
-            else:
-                stop = 20.0
-
-            # arg 3: step
-            if len(command) > 3:
-                step = float(command[3])
-            else:
-                step = 0.1
-
-            # arg 4: average
-            if len(command) > 4:
-                average = float(command[3])
-            else:
-                average = 100
-
-            # Hot load
-            bias2.hot_load()
-            time.sleep(1)
-
-            # Measure IF power
-            try:
-                if_frequency = np.arange(start, stop+1e-10, step)
-                if_power1h = np.empty_like(if_frequency)
-                if_power2h = np.empty_like(if_frequency)
-                if_power1h_std = np.empty_like(if_frequency)
-                if_power2h_std = np.empty_like(if_frequency)
-                for i, _if_freq in np.ndenumerate(if_frequency):
-                    if_filter1.set_frequency(_if_freq)
-                    if_filter2.set_frequency(_if_freq)
-                    time.sleep(0.1)
-                    if_power1h[i], if_power1h_std[i] = bias1.read_ifpower(average=average, stats=True)
-                    if_power2h[i], if_power2h_std[i] = bias2.read_ifpower(average=average, stats=True)
-                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tHot load: ")
-            except KeyboardInterrupt:
-                print("")
-                plt.close('all')
-                continue
-
-            # Cold load
-            bias2.cold_load()
-            time.sleep(1)
-
-            # Measure IF power
-            try:
-                if_frequency = np.arange(start, stop+1e-10, step)
-                if_power1c = np.empty_like(if_frequency)
-                if_power2c = np.empty_like(if_frequency)
-                if_power1c_std = np.empty_like(if_frequency)
-                if_power2c_std = np.empty_like(if_frequency)
-                for i, _if_freq in np.ndenumerate(if_frequency):
-                    if_filter1.set_frequency(_if_freq)
-                    if_filter2.set_frequency(_if_freq)
-                    time.sleep(0.1)
-                    if_power1c[i], if_power1c_std[i] = bias1.read_ifpower(average=average, stats=True)
-                    if_power2c[i], if_power2c_std[i] = bias2.read_ifpower(average=average, stats=True)
-                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tCold load:")
-            except KeyboardInterrupt:
-                print("")
-                plt.close('all')
-                continue
-
-            # Return to previous IF frequency
-            if_filter1.set_frequency(param1['IFFREQ'])
-            if_filter2.set_frequency(param2['IFFREQ'])
-
-            # Y-factor
-            yfac1 = if_power1h / if_power1c
-            yfac2 = if_power2h / if_power2c
-
-            # Noise temperature
-            tn1 = (293 - yfac1 * 78) / (yfac1 - 1)
-            tn2 = (293 - yfac2 * 78) / (yfac2 - 1)
-
-            # Gain
-            gain1 = (if_power1h - if_power1c) / (293 - 78)
-            gain2 = (if_power2h - if_power2c) / (293 - 78)
-
-            # Plot
-            fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(12, 8))
-            fig.subplots_adjust(hspace=0)
-            ax1.plot(if_frequency, if_power1h, 'r',   label="Ch1: hot")
-            ax1.plot(if_frequency, if_power1c, 'b',   label="Ch1: cold")
-            ax1.plot(if_frequency, if_power2h, 'r--', label="Ch2: hot")
-            ax1.plot(if_frequency, if_power2c, 'b--', label="Ch1: cold")
-            
-            ax2.plot(if_frequency, tn1, 'g',   label="Ch1: noise")
-            ax2.plot(if_frequency, tn2, 'g--', label="Ch2: noise")
-
-            ax3.plot(if_frequency, 10*np.log10(abs(gain1)), 'k',   label="Ch1: gain")
-            ax3.plot(if_frequency, 10*np.log10(abs(gain2)), 'k--', label="Ch2: gain")
-            
-            ax1.set_ylabel("IF power (K)")
-            ax2.set_ylabel("Noise temp. (K)")
-            ax3.set_ylabel("Gain (dB)")
-            ax3.set_xlabel("IF frequency (GHz)")
-            ax1.set_ylim(ymin=0)
-            ax2.set_ylim([0, 249])
-            ax1.set_xlim([if_frequency.min(), if_frequency.max()])
-            ax2.set_xlim([if_frequency.min(), if_frequency.max()])
-            ax3.set_xlim([if_frequency.min(), if_frequency.max()])
-            ax1.legend(frameon=True, framealpha=1)
-            ax2.legend(frameon=True, framealpha=1)
-            ax3.legend(frameon=True, framealpha=1)
-            plt.show()
-
-            # Save data
-            filename = ask_filename()
-            if filename is None:
-                print("\tNot any saving data.\n")
-            else:
-                # Save data
-                header = "IF frequency (GHz), IF power 1 hot (K), IF power 1 cold (K), IF power 2 hot (K), IF power 2 cold (K), Tn 1 (K), Tn 2 (K), G 1, G 2"
-                np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power1h, if_power1c, if_power2h, if_power2c, tn1, tn2, gain1, gain2)).T, header=header)
-                # Save metadata
-                with open(filename + ".mdat", "w") as fout:
-                    json.dump(param1, fout, indent=4)
-                    json.dump(param2, fout, indent=4)
-                # Save figure
-                fig.savefig(filename + ".png")
-
         # YFAC: Measure Y-factor
         elif command[0] == "Y":
 
@@ -1642,6 +1417,150 @@ try:
             bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
             print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
             print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
+
+        # YIF: Measure Y-factor vs IF frequency
+        elif command[0] == "YIF":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure Y-factor versus IF frequency\n")
+                print("\tUseage: YIF <start> <stop> <step> <average>")
+                print("\twhere <start> is the start frequency, in units GHz (default 3)")
+                print("\t      <stop> is the stop frequency, in units GHz (default 25)")
+                print("\t      <step> is the frequency step, in units GHz (default 0.1)")
+                print("\t      <average> is the number of points to average (default 100)\n")
+                continue
+
+            print("\n\tMEASURE Y-FACTOR VS IF FREQUENCY:\n")
+
+            # arg 1: start
+            if len(command) > 1:
+                start = float(command[1])
+            else:
+                start = 3.0
+
+            # arg 2: stop
+            if len(command) > 2:
+                stop = float(command[2])
+            else:
+                stop = 20.0
+
+            # arg 3: step
+            if len(command) > 3:
+                step = float(command[3])
+            else:
+                step = 0.1
+
+            # arg 4: average
+            if len(command) > 4:
+                average = float(command[3])
+            else:
+                average = 100
+
+            # Hot load
+            bias2.hot_load()
+            time.sleep(1)
+
+            # Measure IF power
+            try:
+                if_frequency = np.arange(start, stop+1e-10, step)
+                if_power1h = np.empty_like(if_frequency)
+                if_power2h = np.empty_like(if_frequency)
+                if_power1h_std = np.empty_like(if_frequency)
+                if_power2h_std = np.empty_like(if_frequency)
+                for i, _if_freq in np.ndenumerate(if_frequency):
+                    if_filter1.set_frequency(_if_freq)
+                    if_filter2.set_frequency(_if_freq)
+                    time.sleep(0.1)
+                    if_power1h[i], if_power1h_std[i] = bias1.read_ifpower(average=average, stats=True)
+                    if_power2h[i], if_power2h_std[i] = bias2.read_ifpower(average=average, stats=True)
+                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tHot load: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            # Cold load
+            bias2.cold_load()
+            time.sleep(1)
+
+            # Measure IF power
+            try:
+                if_frequency = np.arange(start, stop+1e-10, step)
+                if_power1c = np.empty_like(if_frequency)
+                if_power2c = np.empty_like(if_frequency)
+                if_power1c_std = np.empty_like(if_frequency)
+                if_power2c_std = np.empty_like(if_frequency)
+                for i, _if_freq in np.ndenumerate(if_frequency):
+                    if_filter1.set_frequency(_if_freq)
+                    if_filter2.set_frequency(_if_freq)
+                    time.sleep(0.1)
+                    if_power1c[i], if_power1c_std[i] = bias1.read_ifpower(average=average, stats=True)
+                    if_power2c[i], if_power2c_std[i] = bias2.read_ifpower(average=average, stats=True)
+                    progress_bar(i[0] + 1, len(if_frequency), prefix="\tCold load:")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+
+            # Return to previous IF frequency
+            if_filter1.set_frequency(param1['IFFREQ'])
+            if_filter2.set_frequency(param2['IFFREQ'])
+
+            # Y-factor
+            yfac1 = if_power1h / if_power1c
+            yfac2 = if_power2h / if_power2c
+
+            # Noise temperature
+            tn1 = (293 - yfac1 * 78) / (yfac1 - 1)
+            tn2 = (293 - yfac2 * 78) / (yfac2 - 1)
+
+            # Gain
+            gain1 = (if_power1h - if_power1c) / (293 - 78)
+            gain2 = (if_power2h - if_power2c) / (293 - 78)
+
+            # Plot
+            fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(12, 8))
+            fig.subplots_adjust(hspace=0)
+            ax1.plot(if_frequency, if_power1h, 'r',   label="Ch1: hot")
+            ax1.plot(if_frequency, if_power1c, 'b',   label="Ch1: cold")
+            ax1.plot(if_frequency, if_power2h, 'r--', label="Ch2: hot")
+            ax1.plot(if_frequency, if_power2c, 'b--', label="Ch1: cold")
+            
+            ax2.plot(if_frequency, tn1, 'g',   label="Ch1: noise")
+            ax2.plot(if_frequency, tn2, 'g--', label="Ch2: noise")
+
+            ax3.plot(if_frequency, 10*np.log10(abs(gain1)), 'k',   label="Ch1: gain")
+            ax3.plot(if_frequency, 10*np.log10(abs(gain2)), 'k--', label="Ch2: gain")
+            
+            ax1.set_ylabel("IF power (K)")
+            ax2.set_ylabel("Noise temp. (K)")
+            ax3.set_ylabel("Gain (dB)")
+            ax3.set_xlabel("IF frequency (GHz)")
+            ax1.set_ylim(ymin=0)
+            ax2.set_ylim([0, 249])
+            ax1.set_xlim([if_frequency.min(), if_frequency.max()])
+            ax2.set_xlim([if_frequency.min(), if_frequency.max()])
+            ax3.set_xlim([if_frequency.min(), if_frequency.max()])
+            ax1.legend(frameon=True, framealpha=1)
+            ax2.legend(frameon=True, framealpha=1)
+            ax3.legend(frameon=True, framealpha=1)
+            plt.show()
+
+            # Save data
+            filename = ask_filename()
+            if filename is None:
+                print("\tNot any saving data.\n")
+            else:
+                # Save data
+                header = "IF frequency (GHz), IF power 1 hot (K), IF power 1 cold (K), IF power 2 hot (K), IF power 2 cold (K), Tn 1 (K), Tn 2 (K), G 1, G 2"
+                np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power1h, if_power1c, if_power2h, if_power2c, tn1, tn2, gain1, gain2)).T, header=header)
+                # Save metadata
+                with open(filename + ".mdat", "w") as fout:
+                    json.dump(param1, fout, indent=4)
+                    json.dump(param2, fout, indent=4)
+                # Save figure
+                fig.savefig(filename + ".png")
 
         # 2SB measurements ------------------------------------------------- #
 
@@ -2021,6 +1940,8 @@ try:
                 if plot:
                     fig.savefig(filename + ".png")
 
+        # Misc measurements ------------------------------------------------ #
+
         # CONST: Set constant bias and monitor V + I
         elif command[0] == "CONST":
 
@@ -2049,6 +1970,60 @@ try:
                 # Save data
                 header = "Time, Voltage 1 (mV), Current 1 (uA), IF Power 1 (K), Voltage 2 (mV), Current 2 (uA), IF Power 2 (K)"
                 np.savetxt(filename + ".dat", results, header=header)
+
+        # RESISTANCE: Fit resistance of I-V curve
+        elif command[0] == "R":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure the resistance of the I-V curve\n")
+                print("\tUsage: R\n")
+                continue
+
+            print("\n\tMEASURE RESISTANCE:")
+
+            # Parameters
+            npts = 10
+            sleep_time = 0.1
+            average = 10
+            vmin, vmax = param1["VMIN"], param1["VMAX"]
+            vbmin = vmin * 1000 / bias1.config['VMON']['GAIN']
+            vbmax = vmax * 1000 / bias1.config['VMON']['GAIN']
+            vctrl_sweep = np.linspace(vmin, vmax, npts)
+            print(f"\n\tControl voltage sweep: {vmin:5.1f} to {vmax:5.1f} V")
+            print(f"  \tBias voltage sweep:    {vbmin:5.1f} to {vbmax:5.1f} mV\n")
+
+            # Sweep bias voltage and measure voltage / current / IF power
+            try:
+                voltage1, voltage2 = np.zeros(npts), np.zeros(npts)
+                current1, current2 = np.zeros(npts), np.zeros(npts)
+                for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                    bias1.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
+                    bias2.set_control_voltage(_vctrl, vlimit=param2['VLIMIT'])
+                    time.sleep(sleep_time)
+                    voltage1[i], current1[i], _ = bias1.read_all(average=average)
+                    voltage2[i], current2[i], _ = bias2.read_all(average=average)
+                    progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
+            except KeyboardInterrupt:
+                print("")
+                plt.close('all')
+                continue
+            bias1.set_control_voltage(param1['VCTRL'])
+            bias2.set_control_voltage(param2['VCTRL'])
+            print("")
+
+            # Sort by voltage
+            idx = voltage1.argsort()
+            voltage1, current1 = voltage1[idx], current1[idx]
+            idx = voltage2.argsort()
+            voltage2, current2 = voltage2[idx], current2[idx]
+
+            p1, cov1 = np.polyfit(current1*1e-6, voltage1*1e-3, 1, cov=True)
+            p2, cov2 = np.polyfit(current2*1e-6, voltage2*1e-3, 1, cov=True)
+            perr1 = np.sqrt(np.diag(cov1))
+            perr2 = np.sqrt(np.diag(cov2))
+            print(f"\tResistance: {p1[0]:6.2f} +/- {perr1[0]:4.2f} ohms (channel 1)")
+            print(f"\t            {p2[0]:6.2f} +/- {perr2[0]:4.2f} ohms (channel 2)\n")
 
         # Digital input/output --------------------------------------------- #
 
