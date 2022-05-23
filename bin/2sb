@@ -3,11 +3,11 @@
 
 """Interactive script for controlling the 2SB system"""
 
-# import argparse
 import json
 import time
 import numpy as np
 import matplotlib.pyplot as plt 
+import socket
 import uldaq
 
 from appdirs import user_config_dir
@@ -25,18 +25,14 @@ except OSError:
     print("Matplot styles not found")
     print("\ttry: pip install SciencePlots")
 
-# # Grab arguments
-# parser = argparse.ArgumentParser(description="Control 2SB system.")
-# parser.add_argument("--filteraddr", type=str, help="YIG filter IP address", default=None)
-# args = parser.parse_args()
-
 
 def _read_if_power(_bias1, _bias2, average):
-    _p1, _p2 = np.zeros(average), np.zeros(average)
+    """Read IF power from both channels at the same time (interleaved)."""
+    pif_ch1, pif_ch2 = np.zeros(average), np.zeros(average)
     for j in range(average):
-        _p1[j] = _bias1.read_ifpower(average=1, offset_only=True)
-        _p2[j] = _bias2.read_ifpower(average=1, offset_only=True)
-    return np.mean(_p1), np.mean(_p2)
+        pif_ch1[j] = _bias1.read_ifpower(average=1, offset_only=True)
+        pif_ch2[j] = _bias2.read_ifpower(average=1, offset_only=True)
+    return np.mean(pif_ch1), np.mean(pif_ch2)
 
 
 # ----------------------------------------------------------------------------
@@ -88,12 +84,22 @@ try:
 
     # Connect to IF filters and set to previous frequency
     print("Connecting to IF filter 1...")
-    if_filter1 = YigFilter("192.168.1.12", f_adjust=0.000)
+    try:
+        if_filter1 = YigFilter("192.168.1.12", f_adjust=0.000)
+    except socket.timeout:
+        print("Unable to connect to IF filter #1")
+        if_filter1 = None
     print("Connecting to IF filter 2...")
-    if_filter2 = YigFilter("192.168.1.15", f_adjust=0.000)
+    try:
+        if_filter2 = YigFilter("192.168.1.15", f_adjust=0.000)
+    except socket.timeout:
+        print("Unable to connect to IF filter #1")
+        if_filter2 = None
     time.sleep(1)  # TODO: is this needed?
-    if_filter1.set_frequency(param1['IFFREQ'])
-    if_filter2.set_frequency(param1['IFFREQ'])
+    if if_filter1:
+        if_filter1.set_frequency(param1['IFFREQ'])
+    if if_filter2:
+        if_filter2.set_frequency(param1['IFFREQ'])
 
     # Connect to synthesizer for tone injection
     print("Connecting to frequency synthesizer...")
@@ -103,7 +109,7 @@ try:
         pass
 
     print("\nRemember to specify measurement parameters:")
-    print("\t-device, njunc, icoil, freq, etc.\n")
+    print("\t-> device, njunc, icoil, freq")
 
     # For interactive plots
     plt.ion()
