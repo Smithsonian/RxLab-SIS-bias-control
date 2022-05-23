@@ -16,13 +16,12 @@ from sisbias import SISBias, progress_bar, ask_filename, DAQNotFoundError
 from labinstruments.microlambda import YigFilter
 from labinstruments.hittite import Hittite
 
+
+# Fancy formatting for Matplotlib (optional)
 try:
     plt.style.use(["science", "sans", "no-latex"])
-except ModuleNotFoundError:
+except (ModuleNotFoundError, OSError):
     print("Matplotlib styles not found")
-    print("\ttry: pip install SciencePlots")
-except OSError:
-    print("Matplot styles not found")
     print("\ttry: pip install SciencePlots")
 
 
@@ -35,19 +34,20 @@ def _read_if_power(_bias1, _bias2, average):
     return np.mean(pif_ch1), np.mean(pif_ch2)
 
 
-# ----------------------------------------------------------------------------
+# Load parameter files ----------------------------------------------------- #
 
+# DAQ ID (unique to DAQ device)
 daq_id1 = "01D87C3C"
 daq_id2 = "01D87C1E"
+# Configuration files (channels, gains, etc.)
 config_filename1 = user_config_dir("2sb-mixer1.config")
 config_filename2 = user_config_dir("2sb-mixer2.config")
+# Parameter files (device number, frequency, voltage settings, etc.)
 param_filename1 = user_config_dir("2sb-mixer1.param")
 param_filename2 = user_config_dir("2sb-mixer2.param")
+# Calibration files (IV / IF power offsets)
 cal_filename1 = user_config_dir("2sb-mixer1.cal")
 cal_filename2 = user_config_dir("2sb-mixer2.cal")
-
-# filteraddr = "192.168.1.15"
-# filteraddr = args.filteraddr
 
 with open(param_filename1) as _fin:
     param1 = json.load(_fin)
@@ -55,24 +55,25 @@ with open(param_filename1) as _fin:
 with open(param_filename2) as _fin:
     param2 = json.load(_fin)
 
-# ----------------------------------------------------------------------------
+# Run REPL loop ------------------------------------------------------------ #
 
+# Initialize bias control, IF filters, tone synthesizer
 bias1, bias2 = None, None
 if_filter1, if_filter2 = None, None
 tone_synth = None
 
 try:
 
-    # Initialize bias control (connect to DAQ devices)
+    # Connect to DAQ devices
     bias1 = SISBias(config_file=config_filename1, cal_file=cal_filename1, daq_id=daq_id1, name="Channel 1")
     bias2 = SISBias(config_file=config_filename2, cal_file=cal_filename2, daq_id=daq_id2, name="Channel 2")
     
-    # Set bias voltage to previous value
+    # Set bias voltage to previous value (from parameter file)
     bias1.set_control_voltage(param1['VCTRL'], verbose=True)
     bias2.set_control_voltage(param2['VCTRL'], verbose=True)
     print("")
 
-    # Save voltage / current gain to param (from config file)
+    # Save voltage / current gain to param (config file -> param)
     param1["VMONGAIN"] = bias1.config['VMON']['GAIN']
     param2["VMONGAIN"] = bias2.config['VMON']['GAIN']
     param1["IMONGAIN"] = bias1.config['IMON']['GAIN']
@@ -82,7 +83,7 @@ try:
     param1["IMONOFFSET"] = bias1.config['IMON']['OFFSET']
     param2["IMONOFFSET"] = bias2.config['IMON']['OFFSET']
 
-    # Connect to IF filters and set to previous frequency
+    # Connect to IF filters
     print("Connecting to IF filter 1...")
     try:
         if_filter1 = YigFilter("192.168.1.12", f_adjust=0.000)
@@ -95,17 +96,19 @@ try:
     except socket.timeout:
         print("Unable to connect to IF filter #1")
         if_filter2 = None
-    time.sleep(1)  # TODO: is this needed?
+    time.sleep(0.5)  # TODO: is this needed?
+    # Set to previous frequency (from parameter file)
     if if_filter1:
         if_filter1.set_frequency(param1['IFFREQ'])
     if if_filter2:
         if_filter2.set_frequency(param1['IFFREQ'])
 
-    # Connect to synthesizer for tone injection
+    # Connect to synthesizer used for tone injection
     print("Connecting to frequency synthesizer...")
     try:
         tone_synth = Hittite("192.168.1.31", timeout=1, f_adjust=0.000)
-    except:
+    except:  # TODO: what error should this be?
+        print("Unable to connect to tone synthesizer")
         pass
 
     print("\nRemember to specify measurement parameters:")
@@ -128,19 +131,21 @@ try:
 
         # Set parameters --------------------------------------------------- #
 
+        # Parameters with special actions
         skip_commands = ["F", "IF", "V1", "V2", "VB1", "VB2"]
+        # Device-specific parameters
         device_specific = ["DEVICE", "NJUNC", "ICOIL"]
 
-        # PARAMETERS: CHANNEL 1
+        # PARAMETERS FOR CHANNEL 1
         if command[0][-1:] == "1" and command[0][:-1] in param1.keys() and command[0][:-1] not in skip_commands and command[0] not in skip_commands:
 
-            # Print parameter value
+            # Print parameter value if no value given
             if len(command) == 1:
                 print(f"\n\t{command[0][:-1]} : {param1[command[0][:-1]]}\n")
-            # Set parameter value
+            # Set parameter value if value given
             elif len(command) == 2:
                 # String parameters
-                if command[0][:-1].upper() in ["LNA", "DEVICE"]:
+                if command[0][:-1].upper() == "DEVICE":
                     param1[command[0][:-1].upper()] = command[1]
                 # Float parameters
                 else:
@@ -152,16 +157,16 @@ try:
             else:
                 print("\n\tError too many values provided for parameter.")
 
-        # PARAMETERS: CHANNEL 2
+        # PARAMETERS FOR CHANNEL 2
         elif command[0][-1:] == "2" and command[0][:-1] in param2.keys() and command[0][:-1] not in skip_commands and command[0] not in skip_commands:
 
-            # Print parameter value
+            # Print parameter value if no value given
             if len(command) == 1:
                 print(f"\n\t{command[0][:-1]} : {param2[command[0][:-1]]}\n")
-            # Set parameter value
+            # Set parameter value if value given
             elif len(command) == 2:
                 # String parameters
-                if command[0][:-1].upper() in ["LNA", "DEVICE"]:
+                if command[0][:-1].upper() == "DEVICE":
                     param2[command[0][:-1].upper()] = command[1]
                 # Float parameters
                 else:
@@ -173,16 +178,16 @@ try:
             else:
                 print("\n\tError too many values provided for parameter.")
 
-        # PARAMETERS: BOTH CHANNELS
+        # PARAMETERS FOR BOTH CHANNELS
         elif command[0] in param1.keys() and command[0] not in skip_commands and command[0] not in device_specific:
 
-            # Print parameter value
+            # Print parameter value if no value given
             if len(command) == 1:
                 print(f"\n\t{command[0]} : {param1[command[0]]}\n")
-            # Set parameter value
+            # Set parameter value if value given
             elif len(command) == 2:
                 # String parameters
-                if command[0].upper() in ["LNA", "DEVICE"]:
+                if command[0].upper() == "DEVICE":
                     param1[command[0].upper()] = command[1]
                     param2[command[0].upper()] = command[1]
                 # Float parameters
@@ -213,7 +218,7 @@ try:
                     if param1['FREQ'] != 0:
                         print("")
                         _f_lo = param1['FREQ']
-                        _f_pll = (_f_lo / 3 -  0.1) * 1e3
+                        _f_pll = (_f_lo / 3 - 0.1) * 1e3
                         print(f"\tLO frequency:     {_f_lo:10.6f} GHz\n")
                         print(f"\tSource frequency: {_f_lo/18:10.6f} GHz (x18)")
                         print(f"\t                  {_f_lo/9:10.6f} GHz (x9)")
@@ -259,21 +264,28 @@ try:
                 print("\n\tSet bias voltage for channel 1\n")
                 print("\tUsage: VB1 <vbias> <iterations>")
                 print("\twhere <vbias> is the voltage in units [mV] (default 0)")
-                print("\t      <iterations> is the number of iterations (default 3)\n")
+                print("\t      <iterations> is the number of iterations (default 1)\n")
                 continue
 
+            # Initialize
+            vbias = None
+            iterations = 1
+
             # arg 1: target value
-            # TODO: fix to use len(command) instead of try/except
-            try: 
-                vbias = float(command[1])
-            except (IndexError, ValueError) as e:
-                vbias = None
+            if len(command) > 1:
+                try:
+                    vbias = float(command[1])
+                except ValueError:
+                    print("\n\tError: Voltage must be a float.\n")
+                    continue
 
             # arg 2: number of iterations
-            try:
-                iterations = int(command[2])
-            except (IndexError, ValueError) as e:
-                iterations = 1
+            if len(command) > 2:
+                try:
+                    iterations = int(command[2])
+                except ValueError:
+                    print("\n\tError: Iterations must be a int.\n")
+                    continue
             
             if vbias is not None:
                 print(f"\n\tBias target:   {vbias:6.2f} mV\n")
@@ -293,17 +305,25 @@ try:
                 print("\t      <iterations> is the number of iterations (default 3)\n")
                 continue
 
+            # Initialize
+            vbias = None
+            iterations = 1
+
             # arg 1: target value
-            try: 
-                vbias = float(command[1])
-            except (IndexError, ValueError) as e:
-                vbias = None
+            if len(command) > 1:
+                try:
+                    vbias = float(command[1])
+                except ValueError:
+                    print("\n\tError: Voltage must be a float.\n")
+                    continue
 
             # arg 2: number of iterations
-            try:
-                iterations = int(command[2])
-            except (IndexError, ValueError) as e:
-                iterations = 1
+            if len(command) > 2:
+                try:
+                    iterations = int(command[2])
+                except ValueError:
+                    print("\n\tError: Iterations must be a int.\n")
+                    continue
             
             if vbias is not None:
                 print(f"\n\tBias target:   {vbias:6.2f} mV\n")
@@ -321,14 +341,20 @@ try:
                 print("\twhere <vbias> is the voltage in units [mV] (default 0)\n")
                 continue
 
-            # arg 1: target value
-            try: 
-                vbias = float(command[1])
-                param1['VMIN'] = bias1.bias_to_control_voltage(vbias)
-                param2['VMIN'] = bias2.bias_to_control_voltage(vbias)
-            except (IndexError, ValueError) as e:
+            # arg 1: minimum bias voltage
+            if len(command) > 1:
+                try:
+                    vbias = float(command[1])
+                    param1['VMIN'] = bias1.bias_to_control_voltage(vbias)
+                    param2['VMIN'] = bias2.bias_to_control_voltage(vbias)
+                except ValueError:
+                    print("\n\tError: Voltage must be a float.\n")
+                    continue
+            else:
                 vbias = bias1.control_to_bias_voltage(param1['VMIN'])
-                # vbias = bias2.control_to_bias_voltage(param2['VMIN'])
+
+            # Sanity check
+            assert param1['VMIN'] == param2['VMIN']
 
             print(f"\n\tBias voltage (min):    {vbias:.1f} mV")
             print(f"  \tControl voltage (min): {param1['VMIN']:.1f} V\n")
@@ -343,14 +369,17 @@ try:
                 print("\twhere <vbias> is the voltage in units [mV] (default 0)\n")
                 continue
 
-            # arg 1: target value
-            try: 
-                vbias = float(command[1])
-                param1['VMAX'] = bias1.bias_to_control_voltage(vbias)
-                param2['VMAX'] = bias2.bias_to_control_voltage(vbias)
-            except (IndexError, ValueError) as e:
+            # arg 1: maximum bias voltage
+            if len(command) > 1:
+                try:
+                    vbias = float(command[1])
+                    param1['VMAX'] = bias1.bias_to_control_voltage(vbias)
+                    param2['VMAX'] = bias2.bias_to_control_voltage(vbias)
+                except ValueError:
+                    print("\n\tError: Voltage must be a float.\n")
+                    continue
+            else:
                 vbias = bias1.control_to_bias_voltage(param1['VMAX'])
-                # vbias = bias2.control_to_bias_voltage(param2['VMAX'])
 
             print(f"\n\tBias voltage (max):    {vbias:.1f} mV")
             print(f"  \tControl voltage (max): {param1['VMAX']:.1f} V\n")
@@ -374,7 +403,7 @@ try:
                 shot = int(command[1])
             else:
                 shot = 0
-            shot ==  1
+            shot = shot == 1
 
             vbmin = param1['VBMIN_LINEAR']
             vbmax = param1['VBMAX_LINEAR']
@@ -397,8 +426,10 @@ try:
                 print("\n\tCalibrating IF power (using shot noise):\n")
                 print(f"\tBias voltage sweep: {vbmin:.1f} to {vbmax:.1f} mV\n")
                 vmin = vbmin / 1000 * bias1.config['VMON']['GAIN'] 
-                vmax = vbmax / 1000 * bias1.config['VMON']['GAIN'] 
-                param1["IFCORR"], param2["IFCORR"] = bias1.calibrate_if(vmin=vmin, vmax=vmax, average=average, njunc=param1["NJUNC"], extra=False, debug=True, bias2=bias2)
+                vmax = vbmax / 1000 * bias1.config['VMON']['GAIN']
+                _cal_param = dict(vmin=vmin, vmax=vmax, average=average, npts=10, sleep_time=0.2,
+                                  njunc=param1["NJUNC"], debug=True, bias2=bias2)
+                param1["IFCORR"], param2["IFCORR"] = bias1.calibrate_if(**_cal_param)
                 bias1.set_control_voltage(param1['VCTRL'])
                 bias2.set_control_voltage(param2['VCTRL'])
 
@@ -432,11 +463,16 @@ try:
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
-            # arg 1: number of points to average
-            try:
-                average = int(command[1])
-            except (IndexError, ValueError) as e:
-                average = 2_000
+            # Initialize
+            average = 2_000
+
+            # arg 1: averaging
+            if len(command) > 1:
+                try:
+                    average = int(command[1])
+                except ValueError:
+                    print("\n\tError: Average must be a int.\n")
+                    continue
 
             _ = bias1.read_voltage(average=average, verbose=True, msg="\n\tVoltage monitor (channel 1)")
             _ = bias2.read_voltage(average=average, verbose=True, msg="\tVoltage monitor (channel 2)")
@@ -451,11 +487,16 @@ try:
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
-            # arg 1: number of points to average
-            try:
-                average = int(command[1])
-            except (IndexError, ValueError) as e:
-                average = 2_000
+            # Initialize
+            average = 2_000
+
+            # arg 1: averaging
+            if len(command) > 1:
+                try:
+                    average = int(command[1])
+                except ValueError:
+                    print("\n\tError: Average must be a int.\n")
+                    continue
 
             _ = bias1.read_current(average=average, verbose=True, msg="\n\tCurrent monitor (channel 1)")
             _ = bias2.read_current(average=average, verbose=True, msg="\tCurrent monitor (channel 2)")
@@ -470,11 +511,16 @@ try:
                 print("\twhere <average> is the number of points to average (default is 2000)\n")
                 continue
 
-            # arg 1: number of points to average
-            try:
-                average = int(command[1])
-            except (IndexError, ValueError) as e:
-                average = 2_000
+            # Initialize
+            average = 2_000
+
+            # arg 1: averaging
+            if len(command) > 1:
+                try:
+                    average = int(command[1])
+                except ValueError:
+                    print("\n\tError: Average must be a int.\n")
+                    continue
 
             _ = bias1.read_ifpower(average=average, verbose=True, msg="\n\tIF power (channel 1)")
             _ = bias2.read_ifpower(average=average, verbose=True, msg="\tIF power (channel 2)")
@@ -494,14 +540,23 @@ try:
 
             print("\n\tMONITOR (BOTH CHANNELS):")
 
+            # arg 1: resistance (for plotting purposes)
             if len(command) > 1:
-                resistance = float(command[1])
+                try:
+                    resistance = float(command[1])
+                except ValueError:
+                    print("Error: resistance must be a float.")
+                    continue
             else:
                 resistance = None
 
+            # Parameters
+            _mon_param1 = dict(npts=param1['NPTS'], sweep_period=param1['PERIOD'], vlimit=param1['VLIMIT'])
+            _mon_param2 = dict(npts=param2['NPTS'], sweep_period=param2['PERIOD'], vlimit=param2['VLIMIT'])
+
             # Start I-V bias sweeps
-            bias1.sweep_control_voltage(param1['VMIN'], param1['VMAX'], npts=param1['NPTS'], sweep_period=param1['PERIOD'], vlimit=param1['VLIMIT'])
-            bias2.sweep_control_voltage(param2['VMIN'], param2['VMAX'], npts=param2['NPTS'], sweep_period=param2['PERIOD'], vlimit=param2['VLIMIT'])
+            bias1.sweep_control_voltage(param1['VMIN'], param1['VMAX'], **_mon_param1)
+            bias2.sweep_control_voltage(param2['VMIN'], param2['VMAX'], **_mon_param2)
             bias1.start_iv_monitor_scan(npts=param1['NPTS'], sweep_period=param1['PERIOD'])
             bias2.start_iv_monitor_scan(npts=param2['NPTS'], sweep_period=param2['PERIOD'])
             time.sleep(param1['PERIOD'] * 2)
@@ -533,8 +588,8 @@ try:
             while True:
                 try:
                     # Restart scans
-                    bias1.sweep_control_voltage(param1['VMIN'], param1['VMAX'], npts=param1['NPTS'], sweep_period=param1['PERIOD'], vlimit=param1['VLIMIT'], verbose=False)
-                    bias2.sweep_control_voltage(param2['VMIN'], param2['VMAX'], npts=param2['NPTS'], sweep_period=param2['PERIOD'], vlimit=param2['VLIMIT'], verbose=False)
+                    bias1.sweep_control_voltage(param1['VMIN'], param1['VMAX'], verbose=False, **_mon_param1)
+                    bias2.sweep_control_voltage(param2['VMIN'], param2['VMAX'], verbose=False, **_mon_param2)
                     bias1.start_iv_monitor_scan(npts=param1['NPTS'], sweep_period=param1['PERIOD'], verbose=False)
                     bias2.start_iv_monitor_scan(npts=param2['NPTS'], sweep_period=param2['PERIOD'], verbose=False)
                     time.sleep(param1['PERIOD'])
@@ -550,7 +605,7 @@ try:
                     plt.pause(0.0001)
                     fig.canvas.flush_events()
 
-                except KeyboardInterrupt:
+                except KeyboardInterrupt:  # TODO: other errors to catch??
                     plt.close('all')
                     bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
                     bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
@@ -571,12 +626,19 @@ try:
 
             print("\n\tMONITOR (CHANNEL 1):")
 
+            # arg 1: resistance (for plotting purposes)
             if len(command) > 1:
-                resistance = float(command[1])
+                try:
+                    resistance = float(command[1])
+                except ValueError:
+                    print("Error: resistance must be a float.")
+                    continue
             else:
                 resistance = None
 
-            bias1.monitor(npts=param1['NPTS'], period=param1['PERIOD'], vmin=param1['VMIN'], vmax=param1['VMAX'], vlimit=param1['VLIMIT'], resistance=resistance, vctrl=param1['VCTRL'])
+            _mon_param = dict(npts=param1['NPTS'], period=param1['PERIOD'], vmin=param1['VMIN'], vmax=param1['VMAX'],
+                              vlimit=param1['VLIMIT'], resistance=resistance, vctrl=param1['VCTRL'])
+            bias1.monitor(**_mon_param)
 
         # MONITOR2: Real time plot of I-V curve
         elif command[0] == "MON2":
@@ -591,12 +653,19 @@ try:
 
             print("\n\tMONITOR (CHANNEL 2):")
 
+            # arg 1: resistance (for plotting purposes)
             if len(command) > 1:
-                resistance = float(command[1])
+                try:
+                    resistance = float(command[1])
+                except ValueError:
+                    print("Error: resistance must be a float.")
+                    continue
             else:
                 resistance = None
 
-            bias2.monitor(npts=param2['NPTS'], period=param2['PERIOD'], vmin=param2['VMIN'], vmax=param2['VMAX'], vlimit=param2['VLIMIT'], resistance=resistance, vctrl=param2['VCTRL'])
+            _mon_param = dict(npts=param2['NPTS'], period=param2['PERIOD'], vmin=param2['VMIN'], vmax=param2['VMAX'],
+                              vlimit=param2['VLIMIT'], resistance=resistance, vctrl=param2['VCTRL'])
+            bias2.monitor(**_mon_param2)
 
         # MEASURE: Measure IV / IF curve
         elif command[0] == "M":
@@ -615,19 +684,31 @@ try:
 
             # arg 1: number of points
             if len(command) > 1:
-                npts = int(command[1])
+                try:
+                    npts = int(command[1])
+                except ValueError:
+                    print("Error: npts must be an int.")
+                    continue
             else:
                 npts = 1001
 
             # arg 2: averaging
             if len(command) > 2:
-                average = int(command[2])
+                try:
+                    average = int(command[2])
+                except ValueError:
+                    print("Error: average must be an int.")
+                    continue
             else:
                 average = 64
 
             # arg 3: sleep time
             if len(command) > 3:
-                sleep_time = float(command[3])
+                try:
+                    sleep_time = float(command[3])
+                except ValueError:
+                    print("Error: sleep_time must be a float.")
+                    continue
             else:
                 sleep_time = 0.1
 
@@ -696,7 +777,7 @@ try:
                     print(f"  \tIF noise:\t\t{if_noise_corr2:.1f} K after correction (channel 2)")
                     print(f"  \tMean IF power:\t\t{np.mean(ifpower1):.1f} K (channel 1)")
                     print(f"  \tMean IF power:\t\t{np.mean(ifpower2):.1f} K (channel 2)\n")
-                except:
+                except:  # TODO: what errors?
                     pnormal1 = None
                     pnormal2 = None
                     pifnoise1 = None
@@ -1048,7 +1129,7 @@ try:
             bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
             print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
 
-        # YFAC: Measure Y-factor
+        # YFAC: Measure Y-factor (sweep one at a time)
         elif command[0] == "Y":
 
             # Print help
@@ -1645,7 +1726,7 @@ try:
 
             print("\n\tMEASURE IMAGE REJECTION RATIO:\n")
 
-            # Debug?
+            # Debugging settings
             debug = True 
             plot = True
             verbose = False
@@ -1668,67 +1749,35 @@ try:
             else:
                 tone_step = 1
 
-            # Start with cold load
+            # arg 4: averaging
+            if len(command) > 4:
+                average = int(command[4])
+            else:
+                average = 2_000
+
+            # arg 5: sleep time, in s
+            if len(command) > 5:
+                sleep_time = float(command[5])
+            else:
+                sleep_time = 0.5
+
+            # Start with cold load (best SNR for tone injection)
             bias2.cold_load()
 
             # Get local oscillator frequency
             local_oscillator = param1['FREQ']
             assert local_oscillator == param2['FREQ']
-            assert local_oscillator != 0, 'Local oscillator frequency not specified'
-            print(f"\t-> LO frequency: {local_oscillator:5.1f} GHz\n")
-            print(f"\t-> Tone offset:  {tone_start:4.2f} to {tone_stop:4.2f} GHz, {tone_step:4.2f} GHz step\n")
-
-            # Sweep parameters
-            # TODO: make into arguments?
-            sleep_time = 0.5
-            average = 2000
+            if local_oscillator != 0:
+                print('Local oscillator frequency not specified')
+                continue
 
             # Tone parameters
             tone_fmult = 9  # frequency multiplication of tone LO chain
             tone_sweep = np.arange(tone_start, tone_stop + 1e-10, tone_step)
             npts = len(tone_sweep)
 
-            # Inject LSB tone (M_L in Kerr 2001)
-            print("\t-> Measuring lower sideband ratio (M_LSB)...")
-            p1lsb, p2lsb = np.zeros(npts), np.zeros(npts)
-            for i, tone_offset in np.ndenumerate(tone_sweep):
-                # Setup tone
-                tone_synth_power = -5  # starting power (dBm)
-                tone_synth_freq = (local_oscillator - tone_offset) / tone_fmult
-                tone_synth.set_power(tone_synth_power, 'dbm')
-                tone_synth.set_frequency(tone_synth_freq)
-                tone_synth.power_on()
-                if verbose:
-                    print(f"\t\tTone offset: {-tone_offset:.2f} GHz ({i[0]} / {npts})")  # debug
-                else:
-                    progress_bar(i[0]+1, npts, prefix='\t\tProgress: ', suffix='', length=50)
-                # Setup IF filters
-                if_filter1.set_frequency(abs(tone_offset))
-                if_filter2.set_frequency(abs(tone_offset))
-                time.sleep(sleep_time)
-                # Wait extra long if it's first step
-                if i[0] == 0:
-                    time.sleep(5)
-                # Optimize synth power
-                _ifpower = bias1.read_ifpower(average=100, offset_only=True)
-                while _ifpower < 0.7:
-                    tone_synth_power += 0.1
-                    if tone_synth_power >= 3:  # don't go above 3 dBm
-                        break
-                    tone_synth.set_power(tone_synth_power, 'dbm')
-                    time.sleep(0.1)
-                    _ifpower = bias1.read_ifpower(average=100, offset_only=True)
-                    if verbose:
-                        print(f"\t\t\t{tone_synth_power:.1f} dBm -> {_ifpower*10:.3f} AU")
-                # Measure IF power
-                p1lsb[i], p2lsb[i] = _read_if_power(bias1, bias2, average)
-                # Print info
-                if verbose:
-                    print(f"\t\tResults: ", end="")
-                    print(f"{-tone_offset:5.1f} GHz", end=", ")
-                    print(f"{tone_synth_freq:6.3f} GHz", end=", ")
-                    print(f"{tone_synth_power:4.1f} dBm", end=", ")
-                    print(f"{p1lsb[i]*10:6.3f} AU, {p2lsb[i]*10:6.3f} AU")
+            print(f"\t-> LO frequency: {local_oscillator:5.1f} GHz\n")
+            print(f"\t-> Tone offset:  {tone_start:4.2f} to {tone_stop:4.2f} GHz, {tone_step:4.2f} GHz step ({npts} points)\n")
 
             # Inject USB tone (M_U in Kerr 2001)
             print("\t-> Measuring upper sideband ratio (M_USB)...")
@@ -1771,6 +1820,48 @@ try:
                     print(f"{tone_synth_freq:6.3f} GHz", end=", ")
                     print(f"{tone_synth_power:4.1f} dBm", end=", ")
                     print(f"{p1usb[i]*10:6.3f} AU, {p2usb[i]*10:6.3f} AU")
+
+            # Inject LSB tone (M_L in Kerr 2001)
+            print("\t-> Measuring lower sideband ratio (M_LSB)...")
+            p1lsb, p2lsb = np.zeros(npts), np.zeros(npts)
+            for i, tone_offset in np.ndenumerate(tone_sweep):
+                # Setup tone
+                tone_synth_power = -5  # starting power (dBm)
+                tone_synth_freq = (local_oscillator - tone_offset) / tone_fmult
+                tone_synth.set_power(tone_synth_power, 'dbm')
+                tone_synth.set_frequency(tone_synth_freq)
+                tone_synth.power_on()
+                if verbose:
+                    print(f"\t\tTone offset: {-tone_offset:.2f} GHz ({i[0]} / {npts})")  # debug
+                else:
+                    progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
+                # Setup IF filters
+                if_filter1.set_frequency(abs(tone_offset))
+                if_filter2.set_frequency(abs(tone_offset))
+                time.sleep(sleep_time)
+                # Wait extra long if it's first step
+                if i[0] == 0:
+                    time.sleep(5)
+                # Optimize synth power
+                _ifpower = bias1.read_ifpower(average=100, offset_only=True)
+                while _ifpower < 0.7:
+                    tone_synth_power += 0.1
+                    if tone_synth_power >= 3:  # don't go above 3 dBm
+                        break
+                    tone_synth.set_power(tone_synth_power, 'dbm')
+                    time.sleep(0.1)
+                    _ifpower = bias1.read_ifpower(average=100, offset_only=True)
+                    if verbose:
+                        print(f"\t\t\t{tone_synth_power:.1f} dBm -> {_ifpower * 10:.3f} AU")
+                # Measure IF power
+                p1lsb[i], p2lsb[i] = _read_if_power(bias1, bias2, average)
+                # Print info
+                if verbose:
+                    print(f"\t\tResults: ", end="")
+                    print(f"{-tone_offset:5.1f} GHz", end=", ")
+                    print(f"{tone_synth_freq:6.3f} GHz", end=", ")
+                    print(f"{tone_synth_power:4.1f} dBm", end=", ")
+                    print(f"{p1lsb[i] * 10:6.3f} AU, {p2lsb[i] * 10:6.3f} AU")
 
             # Turn tone off
             tone_synth.power_off()
