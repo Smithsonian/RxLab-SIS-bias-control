@@ -52,8 +52,8 @@ class SISBias:
             with open(self.config_file) as _fin:
                 self.config = json.load(_fin)
         except FileNotFoundError as e:
-            print("\nConfiguration file not found.")
-            print("Run \"sisbias-init-config-v0\" or \"sisbias-init-config-v3\" to initialize this file.\n")
+            print("\n\tConfiguration file not found.")
+            print("\tRun \"sisbias-init-config-v0\" or \"sisbias-init-config-v3\" to initialize this file.\n")
             raise e
 
         # Read calibration file file
@@ -64,8 +64,8 @@ class SISBias:
             with open(self.cal_file) as _fin:
                 self.cal = json.load(_fin)
         except FileNotFoundError as e:
-            print("\nCalibration file not found.")
-            print("Run \"sisbias-init-cal\" to initialize this file.\n")
+            print("\n\tCalibration file not found.")
+            print("\tRun \"sisbias-init-cal\" to initialize this file.\n")
             raise e
 
         # Find all available DAQ devices
@@ -76,7 +76,7 @@ class SISBias:
             self.ao_range = Range.BIP10VOLTS  # TODO: Fix hack
             devices = get_daq_device_inventory(InterfaceType.ETHERNET)
         else:
-            print("interface must be either 'usb' or 'ethernet'")
+            print("Error: interface must be either 'usb' or 'ethernet'")
             raise ValueError
         number_of_devices = len(devices)
 
@@ -138,9 +138,9 @@ class SISBias:
         # Establish a connection to the device.
         self.desc = self.daq_device.get_descriptor()
         self.daq_name = "{} ({})".format(self.desc.dev_string, self.desc.unique_id)
-        print(f'\nConnecting to {self.daq_name}... ', end=" ")
+        print(f'\n\tConnecting to {self.daq_name}... ', end=" ")
         self.daq_device.connect(connection_code=0)
-        print("done\n")
+        print("done")
         
         # Initialize scan status
         if self.has_ao_pacer:
@@ -755,9 +755,9 @@ class SISBias:
         self.cal['IFOFFSET'] = new_ifoffset
         if verbose:
             change = abs(old_ifoffset - new_ifoffset) / abs(new_ifoffset) * 100
-            print(f"\n\tOld IF offset:  {old_ifoffset:7.4f} AU")
-            print(f"  \tNew IF offset:  {new_ifoffset:7.4f} AU")
-            print(f"  \t-> change:      {change:7.1f} %\n")
+            print(f"\n\t\tOld IF offset:  {old_ifoffset:7.4f} AU")
+            print(f"  \t\tNew IF offset:  {new_ifoffset:7.4f} AU")
+            print(f"  \t\t-> change:      {change:7.1f} %\n")
         if wait2:
             _ = input("\t\t** Turn warm LNA back on. Press enter when ready. **")
 
@@ -790,60 +790,92 @@ class SISBias:
 
         # Measure shot noise
         vsweep = np.linspace(vmin, vmax, npts)
-        vsis, pif = np.zeros(npts), np.zeros(npts)
+        vsis, isis, pif = np.zeros(npts), np.zeros(npts), np.zeros(npts)
         if bias2:
-            vsis2, pif2 = np.zeros(npts), np.zeros(npts)
+            vsis2, isis2, pif2 = np.zeros(npts), np.zeros(npts), np.zeros(npts)
         for i, _v in np.ndenumerate(vsweep):
-            progress_bar(i[0]+1, npts, prefix="\tMeasuring shot noise: ")
+            progress_bar(i[0]+1, npts, prefix="\t\tMeasuring shot noise: ")
             self.set_control_voltage(_v)
             if bias2:
                 bias2.set_control_voltage(_v)
             time.sleep(sleep_time)
             vsis[i] = self.read_voltage(average=average)
-            pif[i] = self.read_ifpower(average=average, calibrate=False)
+            isis[i] = self.read_current(average=average)
+            pif[i] = self.read_ifpower(average=average, offset_only=True)
             if bias2:
                 vsis2[i] = bias2.read_voltage(average=average)
-                pif2[i] = bias2.read_ifpower(average=average, calibrate=False)
-        pif -= self.cal['IFOFFSET']
-        if bias2:
-            pif -= bias2.cal['IFOFFSET']
+                isis2[i] = bias2.read_current(average=average)
+                pif2[i] = bias2.read_ifpower(average=average, offset_only=True)
 
         # Calculate calibration factor
+        # Normal resistance...
+        pnormal = np.polyfit(vsis, isis, 1)
+        v_intercept = -pnormal[1] / pnormal[0]  # mV
+        rnormal = 1000 / pnormal[0]  # ohms
+        gamma = (50 - rnormal) / (50 + rnormal)
+        gmismatch = 1 - np.abs(gamma) ** 2
+        # Shot noise...
         pshot = np.polyfit(vsis, pif, 1)
-        au2k = 5.8 / pshot[0] / njunc
+        au2k = 5.8 / pshot[0] / njunc  # K / AU
         old_correction = self.cal['IFCORR']
         self.cal['IFCORR'] = au2k
         pif *= au2k
-        change = abs(old_correction - au2k) / abs(au2k) * 100
+        change = (old_correction - au2k) / abs(au2k) * 100
+        if_noise = np.polyval(pshot, v_intercept) * au2k  # K
+        if_noise_corr = (if_noise - 1.3) * gmismatch  # K
         if verbose:
             if bias2:
                 print("\n\tChannel 1:")
-            print(f"\n\tOld correction: {old_correction:8.1f} K/AU")
-            print(f"  \tNew correction: {self.cal['IFCORR']:8.1f} K/AU")
-            print(f"  \t-> change:      {change:8.1f} %\n")
+            print(f"\n\t\tR_normal:       {rnormal:7.2f} ohms")
+            print(f"  \t\tV_intercept:    {v_intercept:7.2f} mV")
+            print(f"  \t\tG_mismatch:     {gmismatch:7.2f}")
+            print(f"\n\t\tIF noise:       {if_noise:7.2f} K uncorrected")
+            print(f"  \t\t                {if_noise_corr:7.2f} K corrected")
+            print(f"\n\t\tOld correction: {old_correction:7.2f} K/AU")
+            print(f"  \t\tNew correction: {self.cal['IFCORR']:7.2f} K/AU")
+            print(f"  \t\t-> change:      {change:7.2f} %")
 
         if bias2:
             # Calculate calibration factor
+            # Normal resistance...
+            pnormal2 = np.polyfit(vsis2, isis2, 1)
+            v_intercept2 = -pnormal2[1] / pnormal2[0]  # mV
+            rnormal2 = 1000 / pnormal2[0]  # ohms
+            gamma2 = (50 - rnormal2) / (50 + rnormal2)
+            gmismatch2 = 1 - np.abs(gamma2) ** 2
+            # Shot noise...
             pshot2 = np.polyfit(vsis2, pif2, 1)
-            au2k2 = 5.8 / pshot2[0] / njunc
+            au2k2 = 5.8 / pshot2[0] / njunc  # K / AU
             old_correction = bias2.cal['IFCORR']
             bias2.cal['IFCORR'] = au2k2
             pif2 *= au2k2
-            change = abs(old_correction - au2k2) / abs(au2k2) * 100
+            change = (old_correction - au2k2) / abs(au2k2) * 100
+            if_noise2 = np.polyval(pshot2, v_intercept2) * au2k2  # K
+            if_noise2_corr = (if_noise2 - 1.3) * gmismatch2  # K
             if verbose:
                 print("\n\tChannel 2:")
-                print(f"\n\tOld correction: {old_correction:8.1f} K/AU")
-                print(f"  \tNew correction: {bias2.cal['IFCORR']:8.1f} K/AU")
-                print(f"  \t-> change:      {change:8.1f} %\n")
+                print(f"\n\t\tR_normal:       {rnormal2:7.2f} ohms")
+                print(f"  \t\tV_intercept:    {v_intercept2:7.2f} mV")
+                print(f"  \t\tG_mismatch:     {gmismatch2:7.2f}")
+                print(f"\n\t\tIF noise:       {if_noise2:7.2f} K uncorrected")
+                print(f"  \t\t                {if_noise2_corr:7.2f} K corrected")
+                print(f"\n\t\tOld correction: {old_correction:7.2f} K/AU")
+                print(f"  \t\tNew correction: {bias2.cal['IFCORR']:7.2f} K/AU")
+                print(f"  \t\t-> change:      {change:7.2f} %\n")
 
         if debug:
             fig, ax1 = plt.subplots(figsize=(6, 5))
             plt.title(self.name_str[1:-1])
             ax1.plot(vsis, pif, 'ko-', label="IF power")
-            ax1.plot(vsis, np.polyval(pshot, vsis) * au2k, 'r--')
+            _vtmp = np.linspace(0, vsis.max(), 2)
+            ax1.plot(_vtmp, np.polyval(pshot, _vtmp) * au2k, 'r--')
+            ax1.plot(v_intercept, if_noise, 'r*')
+            ax1.plot(v_intercept, if_noise_corr, 'b*')
             if bias2:
                 ax1.plot(vsis2, pif2, 'bo-', label="IF power 2")
-                ax1.plot(vsis2, np.polyval(pshot2, vsis2) * au2k2, 'r--')
+                ax1.plot(_vtmp, np.polyval(pshot2, _vtmp) * au2k2, 'r--')
+                ax1.plot(v_intercept2, if_noise2, 'r*')
+                ax1.plot(v_intercept2, if_noise2_corr, 'b*')
             ax1.set_xlabel("Bias voltage (mV)")
             ax1.set_ylabel("IF power (AU)")
             ax1.legend()
@@ -858,7 +890,7 @@ class SISBias:
             if bias2 is None:
                 return self.cal['IFCORR']
             else:
-                return self.cal['IFCORR'], bias2.cal['IFCORR']
+                return self.cal['IFCORR'], if_noise_corr, bias2.cal['IFCORR'], if_noise2_corr
 
     # Measure I-V/IF data ------------------------------------------------ ###
 
