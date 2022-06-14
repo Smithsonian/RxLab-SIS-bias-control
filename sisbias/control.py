@@ -152,9 +152,14 @@ class SISBias:
 
         # Initialize bit for controlling ambient load
         self.dio_info = self.dio_device.get_info()
-        self.digital_port_type = self.dio_info.get_port_types()[0]
-        self.dio_device.d_config_port(self.digital_port_type, DigitalDirection.OUTPUT)
-        self.dio_device.d_bit_out(self.digital_port_type, 0, 0)
+        self.digital_port_type_a = self.dio_info.get_port_types()[0]
+        self.dio_device.d_config_port(self.digital_port_type_a, DigitalDirection.OUTPUT)
+        self.dio_device.d_bit_out(self.digital_port_type_a, 0, 0)
+
+        # Initialize bit for controlling the RF relay
+        self.digital_port_type_b = self.dio_info.get_port_types()[1]
+        self.dio_device.d_config_port(self.digital_port_type_b, DigitalDirection.OUTPUT)
+        self.dio_device.d_bit_out(self.digital_port_type_b, 0, 0)
 
     def __repr__(self):
 
@@ -1270,12 +1275,22 @@ class SISBias:
     def hot_load(self):
         """Move ambient load to insert hot load."""
 
-        self.dio_device.d_bit_out(self.digital_port_type, 0, 0)
+        self.dio_device.d_bit_out(self.digital_port_type_a, 0, 0)
 
     def cold_load(self):
         """Move ambient load to insert cold load."""
 
-        self.dio_device.d_bit_out(self.digital_port_type, 0, 1)
+        self.dio_device.d_bit_out(self.digital_port_type_a, 0, 1)
+
+    def relay_on(self):
+        """"""
+
+        self.dio_device.d_bit_out(self.digital_port_type_b, 0, 1)
+
+    def relay_off(self):
+        """"""
+
+        self.dio_device.d_bit_out(self.digital_port_type_b, 0, 0)
 
     # Scan status -------------------------------------------------------- ###
     
