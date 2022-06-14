@@ -16,6 +16,7 @@ args = parser.parse_args()
 params = dict(
     # General info
     DEVICE="XXXXX",             # device id number
+    DAQID="01D87C3C",           # DAQ ID number
     NJUNC=args.njunc,           # number of series SIS junctions
     # Voltage sweep
     VMIN=-2,                    # control voltage sweep, minimum value [V]
