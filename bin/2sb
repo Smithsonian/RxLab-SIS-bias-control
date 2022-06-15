@@ -9,13 +9,25 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import socket
 import uldaq
+import os
 
 from appdirs import user_config_dir
+from pyvisa.errors import VisaIOError
 
 from sisbias import SISBias, progress_bar, ask_filename, DAQNotFoundError
+from sisbias.filters import gauss_conv
 from labinstruments.microlambda import YigFilter
 from labinstruments.hittite import Hittite
+from labinstruments.keithley import Keithley2602
+from labinstruments.rohdeschwarz import RohdeSchwarzFSVA40
 
+
+# Constants
+THOT = 293.0
+TCOLD = 78.0
+
+# Clear terminal screen
+os.system('clear')
 
 # Fancy formatting for Matplotlib (optional)
 try:
@@ -25,26 +37,133 @@ except (ModuleNotFoundError, OSError):
     print("\ttry: pip install SciencePlots")
 
 
-def _read_if_power(_bias1, _bias2, average):
+def _read_if_power_pm(_bias1, _bias2, _avg):
     """Read IF power from both channels at the same time (interleaved)."""
-    pif_ch1, pif_ch2 = np.zeros(average), np.zeros(average)
-    for j in range(average):
+    pif_ch1, pif_ch2 = np.zeros(_avg), np.zeros(_avg)
+    for j in range(_avg):
         pif_ch1[j] = _bias1.read_ifpower(average=1, offset_only=True)
         pif_ch2[j] = _bias2.read_ifpower(average=1, offset_only=True)
     return np.mean(pif_ch1), np.mean(pif_ch2)
 
 
+# def _read_if_power_bg_sa(_speca, fcenter, span=10e6, rbw=100e3, vbw=3e3, averaging=100, wait=True):
+#     # Frequency range
+#     speca.set_center_frequency(fcenter, 'hz')
+#     speca.set_span(span, 'hz')
+#     speca.set_sweep_points(span // rbw)
+#     # Resolution / video bandwidth
+#     speca.set_rbw_auto("off")
+#     speca.set_rbw(rbw, 'hz')
+#     speca.set_vbw_auto("off")
+#     speca.set_vbw(vbw, 'hz')
+#     # Averaging
+#     speca.set_averaging(averaging)
+#     speca.set_averaging_state("on")
+#     # Run sweep (wait for completion)
+#     speca.sweep(count=averaging, wait=wait)
+#     # Grab entire trace
+#     _, trace_y = speca.get_trace()
+#     return np.mean(trace_y)
+
+
+def _read_if_power_tone_sa(_speca, fcenter, span=20e6, rbw=100e3, vbw=3e3, averaging=100, wait=True, debug=False):
+    # Frequency range
+    speca.set_center_frequency(fcenter, 'hz')
+    speca.set_span(span, 'hz')
+    speca.set_sweep_points(401)
+    speca.set_reference_level(-10, "dBm")
+    # Resolution / video bandwidth
+    speca.set_rbw_auto("off")
+    speca.set_rbw(rbw, 'hz')
+    speca.set_vbw_auto("off")
+    speca.set_vbw(vbw, 'hz')
+    # Averaging
+    speca.set_averaging(averaging)
+    speca.set_averaging_state("on")
+    # Run sweep (wait for completion)
+    speca.sweep(count=averaging, wait=wait)
+    # Set marker
+    speca.set_marker_state("on", 1)
+    speca.set_marker_frequency(fcenter, 'hz')
+    # Grab entire trace
+    trace_x, trace_y = speca.get_trace()
+    power_background = np.mean(np.r_[trace_y[:51], trace_y[-50:]])
+    # Find peak power within 1 MHz of center
+    mask = (fcenter - 5e5 <= trace_x) & (trace_x <= fcenter + 5e5)
+    power_peak = trace_y[mask].max()
+    # Measure power at marker frequency
+    power_marker = float(speca.get_marker_value())
+    # Debug
+    if debug:
+        plt.figure(figsize=(7, 7))
+        plt.plot(trace_x/1e9, trace_y, label='Data')
+        plt.plot(fcenter/1e9, power_marker, 'r*', label='Marker')
+        plt.axhline(power_peak, c='r', ls='--')
+        plt.axhline(power_background, c='k', ls='--')
+    # Signal-to-noise ratio
+    snr = power_peak - power_background
+    # Subtract background, convert dBm->W
+    power_peak_w = 1e-3 * (10**(power_peak/10) - 10**(power_background/10))
+    if power_peak_w < 0:
+        power_peak_w = 1e-30
+    return power_peak_w, snr
+
+
+def _read_if_power_thermal_sa(_speca, f_sweep, span=10e6, rbw=10e6, vbw=50e3, 
+                              level=-30, attenation=0, avg=100, tavg='power', 
+                              gauss_width=4, wait=True, reset=True):
+    if reset:
+        speca.reset()
+    fmin, fmax = f_sweep.min(), f_sweep.max()
+    fnpts = max(101, len(f_sweep))
+    fstep = (fmax - fmin) / (fnpts - 1)
+    print(f"\t\tMeasuring black-body load:")
+    print(f"\t\tFrequency:        {fmin/1e9:7.1f} to {fmax/1e9:.1f} GHz")
+    print(f"\t\tFrequency step:   {fstep/1e3:7.0f} kHz")
+    print(f"\t\tFrequency points: {fnpts:7d} points")
+    print(f"\t\tRBW:              {rbw/1e6:7.3f} MHz")
+    print(f"\t\tVBW:              {vbw/1e6:7.3f} MHz")
+    print(f"\t\tRBW/VBW:          {rbw/vbw:7.0f}")
+    print(f"\t\tRef. level:       {level:7.0f} dBm")
+    print(f"\t\tAttenuation:      {attenation:7.0f} dB")
+    print(f"\t\tAveraging:        {avg:7d}")
+    _space = " " * int(7 - len(tavg))
+    print(f"\t\tAveraging type:   {_space}{tavg}")
+    # Frequency range
+    speca.set_min_frequency(fmin, 'hz')
+    speca.set_max_frequency(fmax, 'hz')
+    speca.set_sweep_points(fnpts)
+    speca.set_reference_level(level, "dBm")
+    speca.set_attenuation(attenation)
+    # Resolution / video bandwidth
+    speca.set_rbw_auto("off")
+    speca.set_rbw(rbw, 'hz')
+    speca.set_vbw_auto("off")
+    speca.set_vbw(vbw, 'hz')
+    # Averaging
+    speca.set_averaging(avg)
+    speca.set_averaging_state("on")
+    speca.set_averaging_type(tavg)
+    # Run sweep (wait for completion)
+    speca.sweep(count=avg, wait=wait, verbose=True)
+    # Grab entire trace
+    if wait:
+        # Grab entire trace
+        trace_x, trace_y = speca.get_trace()
+        if gauss_width is None:
+            return np.interp(f_sweep, trace_x, trace_y)
+        else:
+            return np.interp(f_sweep, trace_x, gauss_conv(trace_y, gauss_width))
+
+
 # Load parameter files ----------------------------------------------------- #
 
-# DAQ ID (unique to DAQ device)
-daq_id1 = "01D87C3C"
-daq_id2 = "01D87C1E"
-# Configuration files (channels, gains, etc.)
-config_filename1 = user_config_dir("2sb-mixer1.config")
-config_filename2 = user_config_dir("2sb-mixer2.config")
 # Parameter files (device number, frequency, voltage settings, etc.)
 param_filename1 = user_config_dir("2sb-mixer1.param")
 param_filename2 = user_config_dir("2sb-mixer2.param")
+# Configuration files (channels, gains, etc.)
+config_filename1 = user_config_dir("2sb-mixer1.config")
+config_filename2 = user_config_dir("2sb-mixer2.config")
 # Calibration files (IV / IF power offsets)
 cal_filename1 = user_config_dir("2sb-mixer1.cal")
 cal_filename2 = user_config_dir("2sb-mixer2.cal")
@@ -61,17 +180,18 @@ with open(param_filename2) as _fin:
 bias1, bias2 = None, None
 if_filter1, if_filter2 = None, None
 tone_synth = None
+speca = None
 
 try:
 
     # Connect to DAQ devices
-    bias1 = SISBias(config_file=config_filename1, cal_file=cal_filename1, daq_id=daq_id1, name="Channel 1")
-    bias2 = SISBias(config_file=config_filename2, cal_file=cal_filename2, daq_id=daq_id2, name="Channel 2")
+    bias1 = SISBias(config_file=config_filename1, cal_file=cal_filename1, daq_id=param1["DAQID"], name="Channel 1")
+    bias2 = SISBias(config_file=config_filename2, cal_file=cal_filename2, daq_id=param2["DAQID"], name="Channel 2")
+    print("")
     
     # Set bias voltage to previous value (from parameter file)
-    bias1.set_control_voltage(param1['VCTRL'], verbose=True)
-    bias2.set_control_voltage(param2['VCTRL'], verbose=True)
-    print("")
+    bias1.set_control_voltage(param1['VCTRL'])
+    bias2.set_control_voltage(param2['VCTRL'])
 
     # Save voltage / current gain to param (config file -> param)
     param1["VMONGAIN"] = bias1.config['VMON']['GAIN']
@@ -86,17 +206,17 @@ try:
     # Connect to IF filters
     print("Connecting to IF filter 1...")
     try:
-        if_filter1 = YigFilter("192.168.1.12", f_adjust=0.000)
+        if_filter1 = YigFilter("192.168.1.12")
+        print("\n\t-> " + if_filter1.get_id())
     except socket.timeout:
-        print("Unable to connect to IF filter #1")
-        if_filter1 = None
-    print("Connecting to IF filter 2...")
+        print("\n\t** Unable to connect to IF filter #1 **")
+    print("\nConnecting to IF filter 2...")
     try:
-        if_filter2 = YigFilter("192.168.1.15", f_adjust=0.000)
+        if_filter2 = YigFilter("192.168.1.15")
+        print("\n\t-> " + if_filter2.get_id())
     except socket.timeout:
-        print("Unable to connect to IF filter #1")
-        if_filter2 = None
-    time.sleep(0.5)  # TODO: is this needed?
+        print("\n\t** Unable to connect to IF filter #2 **")
+    time.sleep(0.1)
     # Set to previous frequency (from parameter file)
     if if_filter1:
         if_filter1.set_frequency(param1['IFFREQ'])
@@ -104,15 +224,37 @@ try:
         if_filter2.set_frequency(param1['IFFREQ'])
 
     # Connect to synthesizer used for tone injection
-    print("Connecting to frequency synthesizer...")
+    print("\nConnecting to frequency synthesizer...")
+    # try:
+    tone_synth = Hittite("192.168.1.31", timeout=1)
+    print("\n\t-> " + tone_synth.get_id())
+    # except:  # TODO: what error should this be?
+    #     print("Unable to connect to tone synthesizer")
+    #     pass
+
+    # Connect to power supply for B-field
+    print("\nConnecting to B-field power supply...")
     try:
-        tone_synth = Hittite("192.168.1.31", timeout=1, f_adjust=0.000)
-    except:  # TODO: what error should this be?
-        print("Unable to connect to tone synthesizer")
-        pass
+        bfield_ps = Keithley2602("192.168.1.20")
+        print("\n\t-> " + bfield_ps.get_id())
+        bfield_ps.set_current1(param1['ICOIL'] / 1000)
+        bfield_ps.set_current2(param2['ICOIL'] / 1000)
+        bfield_ps.set_voltage_limit1(1.5)
+        bfield_ps.set_voltage_limit2(1.5)
+    except VisaIOError:
+        print("\n\t** B-field power supply not found **")
+        bfield_ps = None
+
+    # Connect to spectrum analyzer
+    print("\nConnecting to spectrum analyzer...")
+    try:
+        speca = RohdeSchwarzFSVA40("192.168.1.40")
+        print("\n\t-> " + speca.get_id())
+    except socket.timeout:
+        print("\n\t** Unable to connect to spectrum analyzer **")
 
     print("\nRemember to specify measurement parameters:")
-    print("\t-> device, njunc, icoil, freq")
+    print("\t-> device, njunc, icoil, freq\n")
 
     # For interactive plots
     plt.ion()
@@ -132,11 +274,12 @@ try:
         # Set parameters --------------------------------------------------- #
 
         # Parameters with special actions
-        skip_commands = ["F", "IF", "V1", "V2", "VB1", "VB2"]
+        skip_commands = ["F", "IF", "V1", "V2", "VB1", "VB2", "ICOIL1", "ICOIL2"]
         # Device-specific parameters
         device_specific = ["DEVICE", "NJUNC", "ICOIL"]
 
         # PARAMETERS FOR CHANNEL 1
+        # TODO: shorten line
         if command[0][-1:] == "1" and command[0][:-1] in param1.keys() and command[0][:-1] not in skip_commands and command[0] not in skip_commands:
 
             # Print parameter value if no value given
@@ -158,6 +301,7 @@ try:
                 print("\n\tError too many values provided for parameter.")
 
         # PARAMETERS FOR CHANNEL 2
+        # TODO: shorten line
         elif command[0][-1:] == "2" and command[0][:-1] in param2.keys() and command[0][:-1] not in skip_commands and command[0] not in skip_commands:
 
             # Print parameter value if no value given
@@ -215,24 +359,59 @@ try:
                 try:
                     param1['FREQ'] = float(command[1])
                     param2['FREQ'] = float(command[1])
-                    if param1['FREQ'] != 0:
-                        print("")
-                        _f_lo = param1['FREQ']
-                        _f_pll = (_f_lo / 3 - 0.1) * 1e3
-                        print(f"\tLO frequency:     {_f_lo:10.6f} GHz\n")
-                        print(f"\tSource frequency: {_f_lo/18:10.6f} GHz (x18)")
-                        print(f"\t                  {_f_lo/9:10.6f} GHz (x9)")
-                        print(f"\t                  {_f_lo/3:10.6f} GHz (x3)\n")
-                        print(f"\tPLL frequency:  {_f_pll/8:12.6f} MHz (n=8)")
-                        print(f"\t                {_f_pll/10:12.6f} MHz (n=10)")
-                        print(f"\t                {_f_pll/12:12.6f} MHz (n=12)")
-                        print("")
-                    else:
-                        print("\n\tDC (no LO pumping)\n")
                 except ValueError:
                     print("\n\tError: Frequency must be a float.\n")
+
+            if param1['FREQ'] != 0:
+                print("")
+                _f_lo = param1['FREQ']
+                _f_pll = (_f_lo / 3 - 0.1) * 1e3
+                print(f"\tLO frequency:     {_f_lo:10.6f} GHz\n")
+                print(f"\tSource frequency: {_f_lo/18:10.6f} GHz (x18)")
+                print(f"\t                  {_f_lo/9:10.6f} GHz (x9)")
+                print(f"\t                  {_f_lo/3:10.6f} GHz (x3)\n")
+                print(f"\tPLL frequency:  {_f_pll/8:12.6f} MHz (n=8)")
+                print(f"\t                {_f_pll/10:12.6f} MHz (n=10)")
+                print(f"\t                {_f_pll/12:12.6f} MHz (n=12)")
+                print("")
             else:
-                print(f"\n\tLO frequency: {param1['FREQ']:.1f} GHz\n")
+                print("\n\tDC (no LO pumping)\n")
+
+        # FPLL: Record LO frequency using PLL frequency (no action)
+        elif command[0] == "FPLL":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet LO frequency parameter using PLL frequency (no action)\n")
+                print("\tUsage: FPLL <freq> <mult>")
+                print("\twhere <freq> is the frequency in units [GHz]")
+                print("\t      <mult> is the multiplication factor\n")
+                continue
+
+            if len(command) > 2:
+                try:
+                    _f_pll = float(command[1])
+                    _multiplication = int(command[2])
+                    _f_lo = (_f_pll * _multiplication + 0.1) * 3
+                    param1['FREQ'] = _f_lo
+                    param2['FREQ'] = _f_lo
+                except ValueError:
+                    print("\n\tError: Frequency must be a float.\n")
+
+            if param1['FREQ'] != 0:
+                print("")
+                _f_lo = param1['FREQ']
+                _f_pll = (_f_lo / 3 - 0.1) * 1e3
+                print(f"\tLO frequency:     {_f_lo:10.6f} GHz\n")
+                print(f"\tSource frequency: {_f_lo/18:10.6f} GHz (x18)")
+                print(f"\t                  {_f_lo/9:10.6f} GHz (x9)")
+                print(f"\t                  {_f_lo/3:10.6f} GHz (x3)\n")
+                print(f"\tPLL frequency:  {_f_pll/8:12.6f} MHz (n=8)")
+                print(f"\t                {_f_pll/10:12.6f} MHz (n=10)")
+                print(f"\t                {_f_pll/12:12.6f} MHz (n=12)")
+                print("")
+            else:
+                print("\n\tDC (no LO pumping)\n")
 
         # IF: Set IF frequency
         elif command[0] == "IF":
@@ -289,7 +468,8 @@ try:
             
             if vbias is not None:
                 print(f"\n\tBias target:   {vbias:6.2f} mV\n")
-                _, param1['VCTRL'] = bias1.set_bias_voltage(vbias, iterations=iterations, verbose=True, vlimit=param1["VLIMIT"])
+                _vb_param = dict(iterations=iterations, verbose=True, vlimit=param1["VLIMIT"])
+                _, param1['VCTRL'] = bias1.set_bias_voltage(vbias, **_vb_param)
             else:
                 _ = bias1.read_voltage(average=64, verbose=True)
 
@@ -327,7 +507,8 @@ try:
             
             if vbias is not None:
                 print(f"\n\tBias target:   {vbias:6.2f} mV\n")
-                _, param2['VCTRL'] = bias2.set_bias_voltage(vbias, iterations=iterations, verbose=True, vlimit=param2["VLIMIT"])
+                _vb_param = dict(iterations=iterations, verbose=True, vlimit=param2["VLIMIT"])
+                _, param2['VCTRL'] = bias2.set_bias_voltage(vbias, **_vb_param)
             else:
                 _ = bias2.read_voltage(average=64, verbose=True)
 
@@ -384,6 +565,68 @@ try:
             print(f"\n\tBias voltage (max):    {vbias:.1f} mV")
             print(f"  \tControl voltage (max): {param1['VMAX']:.1f} V\n")
 
+        # ICOIL1: Set B-field coil current
+        elif command[0] == "ICOIL1":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet B-field current for channel 1\n")
+                print("\tUsage: ICOIL1 <current>")
+                print("\twhere <current> is the current in units [mA]\n")
+                continue
+
+            # arg 1: current
+            if len(command) > 1:
+                try:
+                    current = float(command[1])
+                except ValueError:
+                    print("\n\tError: Current must be a float.\n")
+                    continue
+            else:
+                current = None
+            
+            if current is not None:
+                if bfield_ps:
+                    bfield_ps.set_current1(current / 1000)
+            else:
+                if bfield_ps:
+                    current = bfield_ps.get_current1() * 1000
+            if not current:
+                current = param1["ICOIL"]
+            print(f"\n\tICOIL1 : {current} uA\n")
+            param1["ICOIL"] = current
+
+        # ICOIL2: Set B-field coil current
+        elif command[0] == "ICOIL2":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tSet B-field current for channel 2\n")
+                print("\tUsage: ICOIL2 <current>")
+                print("\twhere <current> is the current in units [mA]\n")
+                continue
+
+            # arg 1: current
+            if len(command) > 1:
+                try:
+                    current = float(command[1])
+                except ValueError:
+                    print("\n\tError: Current must be a float.\n")
+                    continue
+            else:
+                current = None
+            
+            if current is not None:
+                if bfield_ps:
+                    bfield_ps.set_current2(current / 1000)
+            else:
+                if bfield_ps:
+                    current = bfield_ps.get_current2() * 1000
+            if not current:
+                current = param2["ICOIL"]
+            print(f"\n\tICOIL2 : {current} uA\n")
+            param2["ICOIL"] = current
+
         # Calibration ------------------------------------------------------ #
 
         # CALIF: Calibrate IF power (channel 1)
@@ -395,7 +638,6 @@ try:
                 print("\tUsage: CALIF <shot>")
                 print("\twhere <shot> calibrate IF power using shot noise slope? 1 yes, 0 no (default)\n")
                 continue
-
             print("\n\tCALIBRATE IF POWER (BOTH CHANNELS)")
 
             # arg 1: calibrate IF power using shot noise slope
@@ -424,12 +666,13 @@ try:
             # Calculate shot noise slope
             if shot:
                 print("\n\tCalibrating IF power (using shot noise):\n")
-                print(f"\tBias voltage sweep: {vbmin:.1f} to {vbmax:.1f} mV\n")
+                print(f"\t\tBias voltage sweep: {vbmin:.1f} to {vbmax:.1f} mV\n")
                 vmin = vbmin / 1000 * bias1.config['VMON']['GAIN'] 
                 vmax = vbmax / 1000 * bias1.config['VMON']['GAIN']
                 _cal_param = dict(vmin=vmin, vmax=vmax, average=average, npts=10, sleep_time=0.2,
                                   njunc=param1["NJUNC"], debug=True, bias2=bias2)
-                param1["IFCORR"], param2["IFCORR"] = bias1.calibrate_if(**_cal_param)
+                _results = bias1.calibrate_if(**_cal_param)
+                param1["IFCORR"], param1["IFNOISE"], param2["IFCORR"], param2["IFNOISE"] = _results
                 bias1.set_control_voltage(param1['VCTRL'])
                 bias2.set_control_voltage(param2['VCTRL'])
 
@@ -441,7 +684,6 @@ try:
                 print("\n\tCalibrate I-V offset (both channels)\n")
                 print("\tUsage: CALIV\n")
                 continue
-
             print("\n\tCALIBRATE I-V OFFSET (BOTH CHANNELS)\n")
             
             print("\tCHANNEL 1:\n")
@@ -537,7 +779,6 @@ try:
                 print("\t        MON <resistance>")
                 print("\twhere <resistance> will plot a resistance line for reference\n")
                 continue
-
             print("\n\tMONITOR (BOTH CHANNELS):")
 
             # arg 1: resistance (for plotting purposes)
@@ -623,7 +864,6 @@ try:
                 print("\t        MON1 <resistance>")
                 print("\twhere <resistance> will plot a resistance line for reference\n")
                 continue
-
             print("\n\tMONITOR (CHANNEL 1):")
 
             # arg 1: resistance (for plotting purposes)
@@ -650,7 +890,6 @@ try:
                 print("\t        MON2 <resistance>")
                 print("\twhere <resistance> will plot a resistance line for reference\n")
                 continue
-
             print("\n\tMONITOR (CHANNEL 2):")
 
             # arg 1: resistance (for plotting purposes)
@@ -665,7 +904,7 @@ try:
 
             _mon_param = dict(npts=param2['NPTS'], period=param2['PERIOD'], vmin=param2['VMIN'], vmax=param2['VMAX'],
                               vlimit=param2['VLIMIT'], resistance=resistance, vctrl=param2['VCTRL'])
-            bias2.monitor(**_mon_param2)
+            bias2.monitor(**_mon_param)
 
         # MEASURE: Measure IV / IF curve
         elif command[0] == "M":
@@ -679,7 +918,6 @@ try:
                 print("\t      <average> is the averaging (default 64)")
                 print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
                 continue
-
             print("\n\tMEASURE I-V + IF CURVE (BOTH CHANNELS):")
 
             # arg 1: number of points
@@ -746,6 +984,13 @@ try:
             voltage2, current2, ifpower2 = voltage2[idx], current2[idx], ifpower2[idx]
 
             # Find intercept, normal resistance and IF noise
+            # TODO: must be a better way
+            pnormal1, pnormal2 = None, None
+            pifnoise1, pifnoise2 = None, None
+            v_intercept1, v_intercept2 = None, None
+            rnormal1, rnormal2 = None, None
+            if_noise1, if_noise2 = None, None
+            if_noise_corr1, if_noise_corr2 = None, None
             print(f"\n\tRange for linear fit:\t{param1['VBMIN_LINEAR']:5.1f} to {param1['VBMAX_LINEAR']:5.1f} mV")
             if param1['FREQ'] == 0:
                 mask1 = (param1['VBMIN_LINEAR'] <= voltage1) & (voltage1 <= param1['VBMAX_LINEAR'])
@@ -801,8 +1046,10 @@ try:
                 ax1.plot(-voltage2, -current2, 'r-', alpha=0.5)
             if param1['FREQ'] == 0:
                 if pnormal1 is not None and pnormal2 is not None:
-                    ax1.plot(voltage1[voltage1 > 0], np.polyval(pnormal1, voltage1[voltage1 > 0]), 'b-', lw=0.5, label=r"$R_n={:.1f}~\Omega$ (ch. 1)".format(rnormal1))
-                    ax1.plot(voltage2[voltage2 > 0], np.polyval(pnormal2, voltage2[voltage2 > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$ (ch. 2)".format(rnormal2))
+                    _v1, _i1 = voltage1[voltage1 > 0], np.polyval(pnormal1, voltage1[voltage1 > 0])
+                    _v2, _i2 = voltage2[voltage2 > 0], np.polyval(pnormal2, voltage2[voltage2 > 0])
+                    ax1.plot(_v1, _i1, 'b-', lw=0.5, label=r"$R_n={:.1f}~\Omega$ (ch. 1)".format(rnormal1))
+                    ax1.plot(_v2, _i2, 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$ (ch. 2)".format(rnormal2))
                 if v_intercept1 is not None and v_intercept2 is not None:
                     ax1.plot(v_intercept1, 0, 'b*', ms=10, label="$x$-intercept (ch. 1)")
                     ax1.plot(v_intercept2, 0, 'r*', ms=10, label="$x$-intercept (ch. 2)")
@@ -818,16 +1065,18 @@ try:
                 ax2.plot(-voltage2, ifpower2, 'r-', alpha=0.5)
             if param1['FREQ'] == 0:
                 if pifnoise1 is not None:
+                    tif_str = r"$T_\mathrm{IF}$"
                     ax2.plot(voltage1, np.polyval(pifnoise1, voltage1), 'b-', lw=0.5)
                     ax2.plot(voltage2, np.polyval(pifnoise2, voltage2), 'r-', lw=0.5)
-                    tif_str = r"$T_\mathrm{IF}$"
                 if v_intercept1 is not None and if_noise1 is not None:
+                    tif_str = r"$T_\mathrm{IF}^\prime$"
                     ax2.plot(v_intercept1, if_noise1, 'b^', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise1))
                     ax2.plot(v_intercept2, if_noise2, 'r^', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise2))
-                    tif_str = r"$T_\mathrm{IF}^\prime$"
                 if if_noise_corr1 is not None:
-                    ax2.plot(v_intercept1, if_noise_corr1, 'bv', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr1))
-                    ax2.plot(v_intercept2, if_noise_corr2, 'rv', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr2))
+                    lbl1 = "{}: {:.1f} K".format(tif_str, if_noise_corr1)
+                    lbl2 = "{}: {:.1f} K".format(tif_str, if_noise_corr2)
+                    ax2.plot(v_intercept1, if_noise_corr1, 'bv', ms=10, label=lbl1)
+                    ax2.plot(v_intercept2, if_noise_corr2, 'rv', ms=10, label=lbl2)
             ax2.legend(loc=4, frameon=True)
             ax2.set_ylabel("IF Power (K)")
             ax2.set_xlabel("Voltage (mV)")
@@ -867,7 +1116,6 @@ try:
                 print("\t      <average> is the averaging (default 64)")
                 print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
                 continue
-
             print("\n\tMEASURE I-V + IF CURVE (CHANNEL 1):")
 
             # arg 1: number of points
@@ -920,6 +1168,8 @@ try:
 
             # Find intercept, normal resistance and IF noise
             print(f"\n\tRange for linear fit:\t{param1['VBMIN_LINEAR']:5.1f} to {param1['VBMAX_LINEAR']:5.1f} mV")
+            pnormal, pifnoise, v_intercept = None, None, None
+            rnormal, if_noise, if_noise_corr = None, None, None
             if param1['FREQ'] == 0:
                 mask = (param1['VBMIN_LINEAR'] <= voltage) & (voltage <= param1['VBMAX_LINEAR'])
                 try:
@@ -936,7 +1186,7 @@ try:
                     print(f"  \tIF noise:\t\t{if_noise:.1f} K")
                     print(f"  \t         \t\t{if_noise_corr:.1f} K (after correction)")
                     print(f"  \tMean IF power:\t\t{np.mean(ifpower):.1f} K\n")
-                except:
+                except:  # TODO: what errors?
                     pnormal = None
                     pifnoise = None
                     v_intercept = None 
@@ -952,7 +1202,8 @@ try:
                 ax1.plot(-voltage, -current, 'k-', alpha=0.5)
             if param1['FREQ'] == 0:
                 if pnormal is not None:
-                    ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$".format(rnormal))
+                    lbl = r"$R_n={:.1f}~\Omega$".format(rnormal)
+                    ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=lbl)
                 if v_intercept is not None:
                     ax1.plot(v_intercept, 0, 'r*', ms=10, label="$x$-intercept")
             ax1.set_xlabel("Voltage (mV)")
@@ -971,7 +1222,8 @@ try:
                     ax2.plot(v_intercept, if_noise, 'r*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise))
                     tif_str = r"$T_\mathrm{IF}^\prime$"
                 if if_noise_corr is not None:
-                    ax2.plot(v_intercept, if_noise_corr, 'b*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr))
+                    lbl = "{}: {:.1f} K".format(tif_str, if_noise_corr)
+                    ax2.plot(v_intercept, if_noise_corr, 'b*', ms=10, label=lbl)
             ax2.legend(loc=4, frameon=True)
             ax2.set_ylabel("IF Power (K)")
             ax2.set_xlabel("Voltage (mV)")
@@ -1004,7 +1256,6 @@ try:
                 print("\t      <average> is the averaging (default 64)")
                 print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
                 continue
-
             print("\n\tMEASURE I-V + IF CURVE (CHANNEL 2):")
 
             # arg 1: number of points
@@ -1057,6 +1308,8 @@ try:
 
             # Find intercept, normal resistance and IF noise
             print(f"\n\tRange for linear fit:\t{param2['VBMIN_LINEAR']:5.1f} to {param2['VBMAX_LINEAR']:5.1f} mV")
+            pnormal, pifnoise, v_intercept = None, None, None
+            rnormal, if_noise, if_noise_corr = None, None, None
             if param2['FREQ'] == 0:
                 mask = (param2['VBMIN_LINEAR'] <= voltage) & (voltage <= param2['VBMAX_LINEAR'])
                 try:
@@ -1073,7 +1326,7 @@ try:
                     print(f"  \tIF noise:\t\t{if_noise:.1f} K")
                     print(f"  \t         \t\t{if_noise_corr:.1f} K (after correction)")
                     print(f"  \tMean IF power:\t\t{np.mean(ifpower):.1f} K\n")
-                except:
+                except:  # TODO: what errors?
                     pnormal = None
                     pifnoise = None
                     v_intercept = None 
@@ -1089,7 +1342,8 @@ try:
                 ax1.plot(-voltage, -current, 'k-', alpha=0.5)
             if param2['FREQ'] == 0:
                 if pnormal is not None:
-                    ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=r"$R_n={:.1f}~\Omega$".format(rnormal))
+                    lbl = r"$R_n={:.1f}~\Omega$".format(rnormal)
+                    ax1.plot(voltage[voltage > 0], np.polyval(pnormal, voltage[voltage > 0]), 'r-', lw=0.5, label=lbl)
                 if v_intercept is not None:
                     ax1.plot(v_intercept, 0, 'r*', ms=10, label="$x$-intercept")
             ax1.set_xlabel("Voltage (mV)")
@@ -1108,7 +1362,8 @@ try:
                     ax2.plot(v_intercept, if_noise, 'r*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise))
                     tif_str = r"$T_\mathrm{IF}^\prime$"
                 if if_noise_corr is not None:
-                    ax2.plot(v_intercept, if_noise_corr, 'b*', ms=10, label="{}: {:.1f} K".format(tif_str, if_noise_corr))
+                    lbl = "{}: {:.1f} K".format(tif_str, if_noise_corr)
+                    ax2.plot(v_intercept, if_noise_corr, 'b*', ms=10, label=lbl)
             ax2.legend(loc=4, frameon=True)
             ax2.set_ylabel("IF Power (K)")
             ax2.set_xlabel("Voltage (mV)")
@@ -1141,7 +1396,6 @@ try:
                 print("\t      <average> is the averaging (default 64)")
                 print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
                 continue
-
             print("\n\tMEASURE Y-FACTOR (ONE CHANNEL AT A TIME):")
 
             # arg 1: number of points
@@ -1176,6 +1430,9 @@ try:
             bias2.set_control_voltage(param2['VCTRL'])
             print(f"\tBias voltage (ch. 2) set to {param2['VCTRL']*1000/bias2.config['VMON']['GAIN']:.2f} mV\n")
 
+            # Read parameters
+            _read_param = dict(average=average, stats=False, calibrate=True)
+
             # Hot load
             bias2.hot_load()
             time.sleep(1)
@@ -1185,7 +1442,7 @@ try:
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
                     bias1.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
-                    results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results1[:, i] = np.array(bias1.read_all(**_read_param)).reshape(3, 1)
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load (ch. 1):  ")
             except KeyboardInterrupt:
                 print("")
@@ -1204,7 +1461,7 @@ try:
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
                     bias1.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
-                    results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results1[:, i] = np.array(bias1.read_all(**_read_param)).reshape(3, 1)
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load (ch. 1): ")
             except KeyboardInterrupt:
                 print("")
@@ -1228,7 +1485,7 @@ try:
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
                     bias2.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
-                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results2[:, i] = np.array(bias2.read_all(**_read_param)).reshape(3, 1)
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load (ch. 2):  ")
             except KeyboardInterrupt:
                 print("")
@@ -1248,7 +1505,7 @@ try:
                 for i, _vctrl in np.ndenumerate(vctrl_sweep):
                     bias2.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
-                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results2[:, i] = np.array(bias2.read_all(**_read_param)).reshape(3, 1)
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load (ch. 2): ")
             except KeyboardInterrupt:
                 print("")
@@ -1276,12 +1533,12 @@ try:
             # Calculate noise temperature
             yfac1 = ph1 / pc1
             yfac2 = ph2 / pc2
-            tn1 = (293 - yfac1 * 78) / (yfac1 - 1)
-            tn2 = (293 - yfac2 * 78) / (yfac2 - 1)
+            tn1 = (THOT - yfac1 * TCOLD) / (yfac1 - 1)
+            tn2 = (THOT - yfac2 * TCOLD) / (yfac2 - 1)
             tn1[tn1 < 0] = 1e10
             tn2[tn2 < 0] = 1e10
-            gain1 = (ph1 - pc1) / (293 - 78)
-            gain2 = (ph2 - pc2) / (293 - 78)
+            gain1 = (ph1 - pc1) / (THOT - TCOLD)
+            gain2 = (ph2 - pc2) / (THOT - TCOLD)
 
             # Plot I-V curve
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -1316,7 +1573,8 @@ try:
                 print("\n\tNot saving any data for channel 1.\n")
             else:
                 # Save data
-                header = "Voltage (mV), Hot Current (uA), Cold Current (uA), Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"
+                header = """Voltage (mV), Hot Current (uA), Cold Current (uA), \
+                Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"""
                 np.savetxt(filename1 + ".dat", np.vstack((v, ih1, ic1, ph1, pc1, tn1, gain1)).T, header=header)
                 fig.savefig(filename1 + ".png", dpi=600)
                 # Save metadata
@@ -1326,7 +1584,8 @@ try:
                 print("\n\tNot saving any data for channel 2.\n")
             else:
                 # Save data
-                header = "Voltage (mV), Hot Current (uA), Cold Current (uA), Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"
+                header = """Voltage (mV), Hot Current (uA), Cold Current (uA), \
+                Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"""
                 np.savetxt(filename2 + ".dat", np.vstack((v, ih2, ic2, ph2, pc2, tn2, gain2)).T, header=header)
                 fig.savefig(filename2 + ".png", dpi=600)
                 # Save metadata
@@ -1349,7 +1608,6 @@ try:
                 print("\t      <average> is the averaging (default 64)")
                 print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
                 continue
-
             print("\n\tMEASURE Y-FACTOR (SWEEP BOTH CHANNELS TOGETHER):")
 
             # arg 1: number of points
@@ -1379,6 +1637,8 @@ try:
             print(f"  \tAveraging: {average}")
             print(f"  \tSleep time: {sleep_time:.1f} s\n")
 
+            _read_param = dict(average=average, stats=False, calibrate=True)
+            
             # Hot load
             bias2.hot_load()
             time.sleep(1)
@@ -1390,8 +1650,8 @@ try:
                     bias1.set_control_voltage(_vctrl, vlimit=vlimit)
                     bias2.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
-                    results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
-                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results1[:, i] = np.array(bias1.read_all(**_read_param)).reshape(3, 1)
+                    results2[:, i] = np.array(bias2.read_all(**_read_param)).reshape(3, 1)
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load: ")
             except KeyboardInterrupt:
                 print("")
@@ -1413,8 +1673,8 @@ try:
                     bias1.set_control_voltage(_vctrl, vlimit=vlimit)
                     bias2.set_control_voltage(_vctrl, vlimit=vlimit)
                     time.sleep(sleep_time)
-                    results1[:, i] = np.array(bias1.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
-                    results2[:, i] = np.array(bias2.read_all(average=average, stats=False, calibrate=True)).reshape(3, 1)
+                    results1[:, i] = np.array(bias1.read_all(**_read_param)).reshape(3, 1)
+                    results2[:, i] = np.array(bias2.read_all(**_read_param)).reshape(3, 1)
                     progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load:")
             except KeyboardInterrupt:
                 print("")
@@ -1443,12 +1703,12 @@ try:
             # Calculate noise temperature
             yfac1 = ph1 / pc1
             yfac2 = ph2 / pc2
-            tn1 = (293 - yfac1 * 78) / (yfac1 - 1)
-            tn2 = (293 - yfac2 * 78) / (yfac2 - 1)
+            tn1 = (THOT - yfac1 * TCOLD) / (yfac1 - 1)
+            tn2 = (THOT - yfac2 * TCOLD) / (yfac2 - 1)
             tn1[tn1 < 0] = 1e10
             tn2[tn2 < 0] = 1e10
-            gain1 = (ph1 - pc1) / (293 - 78)
-            gain2 = (ph2 - pc2) / (293 - 78)
+            gain1 = (ph1 - pc1) / (THOT - TCOLD)
+            gain2 = (ph2 - pc2) / (THOT - TCOLD)
 
             # Plot I-V curve
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -1483,7 +1743,8 @@ try:
                 print("\n\tNot saving any data for channel 1.\n")
             else:
                 # Save data
-                header = "Voltage (mV), Hot Current (uA), Cold Current (uA), Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"
+                header = """Voltage (mV), Hot Current (uA), Cold Current (uA), \
+                Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"""
                 np.savetxt(filename1 + ".dat", np.vstack((v, ih1, ic1, ph1, pc1, tn1, gain1)).T, header=header)
                 fig.savefig(filename1 + ".png", dpi=600)
                 # Save metadata
@@ -1493,7 +1754,8 @@ try:
                 print("\n\tNot saving any data for channel 2.\n")
             else:
                 # Save data
-                header = "Voltage (mV), Hot Current (uA), Cold Current (uA), Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"
+                header = """Voltage (mV), Hot Current (uA), Cold Current (uA), \
+                Hot IF power (K), Cold IF power (K), Noise Temperature (K), Gain"""
                 np.savetxt(filename2 + ".dat", np.vstack((v, ih2, ic2, ph2, pc2, tn2, gain2)).T, header=header)
                 fig.savefig(filename2 + ".png", dpi=600)
                 # Save metadata
@@ -1505,19 +1767,65 @@ try:
             print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
             print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
 
+        # YQ: Measure Y-factor (quick)
+        elif command[0] == "YQ":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure Y-factor (q)\n")
+                print("\tUsage: YQ\n")
+                continue
+            print("\n\tMEASURE Y-FACTOR (QUICK):")
+            
+            # Hot load
+            bias2.hot_load()
+            time.sleep(1)
+            p1h = bias1.read_ifpower(average=1000)
+            p2h = bias2.read_ifpower(average=1000)
+
+            # Cold load
+            bias2.cold_load()
+            time.sleep(1)
+            p1c = bias1.read_ifpower(average=1000)
+            p2c = bias2.read_ifpower(average=1000)
+
+            # Calculate noise temperature
+            yfac1 = p1h / p1c
+            yfac2 = p2h / p2c
+            tn1 = (THOT - yfac1 * TCOLD) / (yfac1 - 1)
+            tn2 = (THOT - yfac2 * TCOLD) / (yfac2 - 1)
+            gain1 = (p1h - p1c) / (THOT - TCOLD)
+            gain2 = (p2h - p2c) / (THOT - TCOLD)
+
+            print(f"\n\tIF power:          {p1h/bias1.cal['IFCORR']:6.3f} uW (ch1 hot)")
+            print(f"  \t                   {p1c/bias1.cal['IFCORR']:6.3f} uW (ch1 cold)")
+            print(f"  \t                   {p2h/bias2.cal['IFCORR']:6.3f} uW (ch2 hot)")
+            print(f"  \t                   {p2c/bias2.cal['IFCORR']:6.3f} uW (ch2 cold)")
+            print(f"\n\t                   {p1h:6.2f} K (ch1 hot)")
+            print(f"  \t                   {p1c:6.2f} K (ch1 cold)")
+            print(f"  \t                   {p2h:6.2f} K (ch2 hot)")
+            print(f"  \t                   {p2c:6.2f} K (ch2 cold)")
+            print(f"\n\tY-factor:          {yfac1:6.2f} (ch1)")
+            print(f"  \t                   {yfac2:6.2f} (ch2)")
+            print(f"\n\tNoise temperature: {tn1:6.1f} K (ch 1)")
+            print(f"  \t                   {tn2:6.1f} K (ch 2)")
+            print(f"\n\tGain:              {gain1:6.1f} (ch 1)")
+            print(f"  \t                   {gain2:6.1f} (ch 2)")
+            print(f"  \t                   {10*np.log10(gain1):6.1f} dB (ch 1)")
+            print(f"  \t                   {10*np.log10(gain2):6.1f} dB (ch 2)")
+
         # YIF: Measure Y-factor vs IF frequency
         elif command[0] == "YIF":
 
             # Print help
             if len(command) == 2 and command[1].upper() == "H":
                 print("\n\tMeasure Y-factor versus IF frequency\n")
-                print("\tUseage: YIF <start> <stop> <step> <average>")
+                print("\tUsage: YIF <start> <stop> <step> <average>")
                 print("\twhere <start> is the start frequency, in units GHz (default 3)")
                 print("\t      <stop> is the stop frequency, in units GHz (default 25)")
                 print("\t      <step> is the frequency step, in units GHz (default 0.1)")
                 print("\t      <average> is the number of points to average (default 100)\n")
                 continue
-
             print("\n\tMEASURE Y-FACTOR VS IF FREQUENCY:\n")
 
             # arg 1: start
@@ -1599,20 +1907,20 @@ try:
             yfac2 = if_power2h / if_power2c
 
             # Noise temperature
-            tn1 = (293 - yfac1 * 78) / (yfac1 - 1)
-            tn2 = (293 - yfac2 * 78) / (yfac2 - 1)
+            tn1 = (THOT - yfac1 * TCOLD) / (yfac1 - 1)
+            tn2 = (THOT - yfac2 * TCOLD) / (yfac2 - 1)
 
             # Gain
-            gain1 = (if_power1h - if_power1c) / (293 - 78)
-            gain2 = (if_power2h - if_power2c) / (293 - 78)
+            gain1 = (if_power1h - if_power1c) / (THOT - TCOLD)
+            gain2 = (if_power2h - if_power2c) / (THOT - TCOLD)
 
             # Plot
             fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(12, 8))
             fig.subplots_adjust(hspace=0)
-            ax1.plot(if_frequency, if_power1h, 'r',   label="Ch1: hot")
-            ax1.plot(if_frequency, if_power1c, 'b',   label="Ch1: cold")
-            ax1.plot(if_frequency, if_power2h, 'r--', label="Ch2: hot")
-            ax1.plot(if_frequency, if_power2c, 'b--', label="Ch1: cold")
+            ax1.semilogy(if_frequency, if_power1h, 'r',   label="Ch1: hot")
+            ax1.semilogy(if_frequency, if_power1c, 'b',   label="Ch1: cold")
+            ax1.semilogy(if_frequency, if_power2h, 'r--', label="Ch2: hot")
+            ax1.semilogy(if_frequency, if_power2c, 'b--', label="Ch1: cold")
             
             ax2.plot(if_frequency, tn1, 'g',   label="Ch1: noise")
             ax2.plot(if_frequency, tn2, 'g--', label="Ch2: noise")
@@ -1624,7 +1932,7 @@ try:
             ax2.set_ylabel("Noise temp. (K)")
             ax3.set_ylabel("Gain (dB)")
             ax3.set_xlabel("IF frequency (GHz)")
-            ax1.set_ylim(ymin=0)
+            ax1.set_ylim([10, 1000])
             ax2.set_ylim([0, 249])
             ax1.set_xlim([if_frequency.min(), if_frequency.max()])
             ax2.set_xlim([if_frequency.min(), if_frequency.max()])
@@ -1640,14 +1948,382 @@ try:
                 print("\tNot any saving data.\n")
             else:
                 # Save data
-                header = "IF frequency (GHz), IF power 1 hot (K), IF power 1 cold (K), IF power 2 hot (K), IF power 2 cold (K), Tn 1 (K), Tn 2 (K), G 1, G 2"
-                np.savetxt(filename + ".dat", np.vstack((if_frequency, if_power1h, if_power1c, if_power2h, if_power2c, tn1, tn2, gain1, gain2)).T, header=header)
+                header = """IF frequency (GHz), IF power 1 hot (K), IF power 1 cold (K), \
+                IF power 2 hot (K), IF power 2 cold (K), Tn 1 (K), Tn 2 (K), G 1, G 2"""
+                _data = np.vstack((if_frequency, if_power1h, if_power1c, if_power2h, if_power2c, 
+                                   tn1, tn2, gain1, gain2)).T
+                np.savetxt(filename + ".dat", _data, header=header)
                 # Save metadata
                 with open(filename + ".mdat", "w") as fout:
                     json.dump(param1, fout, indent=4)
                     json.dump(param2, fout, indent=4)
                 # Save figure
                 fig.savefig(filename + ".png")
+
+        # YIFSA: Measure Y-factor vs IF frequency (spectrum analyzer)
+        elif command[0] == "YIFSA":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure Y-factor versus IF frequency using the spectrum analyzer\n")
+                # print("\tUsage: YIF <start> <stop> <step> <average>")
+                # print("\twhere <start> is the start frequency, in units GHz (default 3)")
+                # print("\t      <stop> is the stop frequency, in units GHz (default 25)")
+                # print("\t      <step> is the frequency step, in units GHz (default 0.1)")
+                # print("\t      <average> is the number of points to average (default 100)\n")
+                continue
+            print("\n\tMEASURE Y-FACTOR VS IF FREQUENCY (SPECTRUM ANALYZER):\n")
+
+            # arg 1: start
+            if len(command) > 1:
+                start = float(command[1])
+            else:
+                start = 2
+
+            # arg 2: stop
+            if len(command) > 2:
+                stop = float(command[2])
+            else:
+                stop = 18
+
+            # arg 3: average
+            if len(command) > 3:
+                average = float(command[2])
+            else:
+                average = 50
+
+            # IF frequency sweep
+            f_sweep = np.linspace(start, stop, 10_001) * 1e9
+            f_step = f_sweep[1] - f_sweep[0]
+
+            # Cold load
+            bias2.cold_load()
+            bias2.relay_off()
+            time.sleep(1)
+            p1c_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None)
+            bias2.relay_on()
+            time.sleep(0.1)
+            p2c_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None, reset=False)
+
+            # Hot load
+            bias2.hot_load()
+            bias2.relay_off()
+            time.sleep(1)
+            p1h_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None, reset=False)
+            bias2.relay_on()
+            time.sleep(0.1)
+            p2h_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None, reset=False)
+
+            # dBm -> linear units (W)
+            if_power1h = 10 ** (p1h_sa_dbm / 10) * 1e-3
+            if_power1c = 10 ** (p1c_sa_dbm / 10) * 1e-3
+            if_power2h = 10 ** (p2h_sa_dbm / 10) * 1e-3
+            if_power2c = 10 ** (p2c_sa_dbm / 10) * 1e-3
+
+            # Smooth to an effective RBW of 25 MHz (same as power meter approach)
+            gauss_width = 25e6 / f_step
+            if_power1h = gauss_conv(if_power1h, gauss_width)
+            if_power1c = gauss_conv(if_power1c, gauss_width)
+            if_power2h = gauss_conv(if_power2h, gauss_width)
+            if_power2c = gauss_conv(if_power2c, gauss_width)
+
+            # Y-factor
+            yfac1 = if_power1h / if_power1c
+            yfac2 = if_power2h / if_power2c
+
+            # Noise temperature
+            tn1 = (THOT - yfac1 * TCOLD) / (yfac1 - 1)
+            tn2 = (THOT - yfac2 * TCOLD) / (yfac2 - 1)
+            tn1[tn1 < 0] = 1e10
+            tn2[tn2 < 0] = 1e10
+
+            # Gain
+            gain1 = (if_power1h - if_power1c) / (THOT - TCOLD)
+            gain2 = (if_power2h - if_power2c) / (THOT - TCOLD)
+
+            # Plot
+            fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(12, 8))
+            fig.subplots_adjust(hspace=0)
+            ax1.plot(f_sweep/1e9, 10*np.log10(if_power1h*1e3), 'r', label="Ch1: hot")
+            ax1.plot(f_sweep/1e9, 10*np.log10(if_power1c*1e3), 'b', label="Ch1: cold")
+            ax1.plot(f_sweep/1e9, 10*np.log10(if_power2h*1e3), 'r', label="Ch2: hot", alpha=0.5)
+            ax1.plot(f_sweep/1e9, 10*np.log10(if_power2c*1e3), 'b', label="Ch2: cold", alpha=0.5)
+            ax2.plot(f_sweep/1e9, tn1, 'g', label="Ch1")
+            ax2.plot(f_sweep/1e9, tn2, 'g', label="Ch2", alpha=0.5)
+            ax3.plot(f_sweep/1e9, 10*np.log10(abs(gain1)), 'k', label="Ch1")
+            ax3.plot(f_sweep/1e9, 10*np.log10(abs(gain2)), 'k', label="Ch2", alpha=0.5)
+            ax1.set_ylabel("IF power (dBm)")
+            ax2.set_ylabel("Noise temp. (K)")
+            ax3.set_ylabel("Gain (dB)")
+            ax3.set_xlabel("IF frequency (GHz)")
+            ax2.set_ylim([0, 499])
+            ax3.set_ylim(ymin=10*np.log10(abs(gain1)).max()-20)
+            ax1.set_xlim([f_sweep.min()/1e9, f_sweep.max()/1e9])
+            ax2.set_xlim([f_sweep.min()/1e9, f_sweep.max()/1e9])
+            ax3.set_xlim([f_sweep.min()/1e9, f_sweep.max()/1e9])
+            ax1.legend(frameon=True, framealpha=1, loc=4, title="IF power")
+            ax2.legend(frameon=True, framealpha=1, loc=4, title="Noise")
+            ax3.legend(frameon=True, framealpha=1, loc=4, title="Gain")
+            plt.show()
+
+            # Save data
+            filename = ask_filename()
+            if filename is None:
+                print("\tNot any saving data.\n")
+            else:
+                # Save data
+                header = """IF frequency (GHz), IF power 1 hot (K), IF power 1 cold (K), \
+                IF power 2 hot (K), IF power 2 cold (K), Tn 1 (K), Tn 2 (K), G 1, G 2"""
+                _data = np.vstack((f_sweep/1e9, if_power1h, if_power1c, if_power2h, if_power2c, 
+                                   tn1, tn2, gain1, gain2)).T
+                np.savetxt(filename + ".dat", _data, header=header)
+                # Save metadata
+                with open(filename + ".mdat", "w") as fout:
+                    json.dump(param1, fout, indent=4)
+                    json.dump(param2, fout, indent=4)
+                # Save figure
+                fig.savefig(filename + ".png")
+
+        # YFAC: Measure Y-factor as a function of B-field
+        elif command[0] == "YB":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure Y-factor (as a function of B-field)\n")
+                # print("\tUsage: YB <npts> <average> <sleeptime>")
+                # print("\twhere <npts> is the number of points (default 201)")
+                # print("\t      <average> is the averaging (default 64)")
+                # print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
+                continue
+            print("\n\tMEASURE Y-FACTOR (SWEEP B-FIELD):")
+
+            # # arg 1: number of points
+            # if len(command) > 1:
+            #     npts = int(command[1])
+            # else:
+            #     npts = 201
+
+            # # arg 2: averaging
+            # if len(command) > 2:
+            #     average = int(command[2])
+            # else:
+            #     average = 64
+
+            # # arg 3: sleep time
+            # if len(command) > 3:
+            #     sleep_time = float(command[3])
+            # else:
+            #     sleep_time = 0.1
+
+            bfield_start = 0
+            bfield_stop = 150
+            bfield_step = 5
+
+            npts = 51
+            average = 64
+            sleep_time = 0.1
+
+            # Parameters
+            vmin, vmax, vlimit = param1["VMIN"], param1["VMAX"], param1["VLIMIT"]
+            vbmin, vbmax = vmin * 1000 / bias1.config['VMON']['GAIN'], vmax * 1000 / bias1.config['VMON']['GAIN']
+            print(f"\n\tBias voltage sweep:    {vbmin:4.1f} to {vbmax:4.1f} mV")
+            print(f"  \tControl voltage sweep: {vmin:4.1f} to {vmax:4.1f} V\n")
+            print(f"  \tNumber of points: {npts}")
+            print(f"  \tAveraging: {average}")
+            print(f"  \tSleep time: {sleep_time:.1f} s")
+
+            _read_param = dict(average=average, stats=False, calibrate=True)
+            
+            bfield_currents = np.arange(bfield_start, bfield_stop + 1e-10, bfield_step) / 1000  # [A]
+            npts_b = len(bfield_currents)
+            voltage, tn, gain = np.empty((npts_b, npts)), np.empty((npts_b, 2, npts)), np.empty((npts_b, 2, npts))
+
+            for j, bfield_current in np.ndenumerate(bfield_currents):
+
+                print(f"\n\tB-field = {bfield_current*1000:.1f} uA\n")
+
+                bfield_ps.set_current1(bfield_current)
+                bfield_ps.set_current2(bfield_current)
+
+                # Hot load
+                bias2.hot_load()
+                time.sleep(1)
+                vctrl_sweep = np.linspace(vmin, vmax, npts)
+                try:
+                    results1 = np.zeros((3, npts))
+                    results2 = np.zeros((3, npts))
+                    for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                        bias1.set_control_voltage(_vctrl, vlimit=vlimit)
+                        bias2.set_control_voltage(_vctrl, vlimit=vlimit)
+                        time.sleep(sleep_time)
+                        results1[:, i] = np.array(bias1.read_all(**_read_param)).reshape(3, 1)
+                        results2[:, i] = np.array(bias2.read_all(**_read_param)).reshape(3, 1)
+                        progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tHot load: ")
+                except KeyboardInterrupt:
+                    print("")
+                    plt.close('all')
+                    bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+                    print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
+                    continue
+                vh1, ih1, ph1 = results1[:, results1[0, :].argsort()]
+                vh2, ih2, ph2 = results2[:, results2[0, :].argsort()]
+
+                # Cold load
+                bias2.cold_load()
+                time.sleep(1)
+                vctrl_sweep = np.linspace(vmin, vmax, npts)
+                try:
+                    results1 = np.zeros((3, npts))
+                    results2 = np.zeros((3, npts))
+                    for i, _vctrl in np.ndenumerate(vctrl_sweep):
+                        bias1.set_control_voltage(_vctrl, vlimit=vlimit)
+                        bias2.set_control_voltage(_vctrl, vlimit=vlimit)
+                        time.sleep(sleep_time)
+                        results1[:, i] = np.array(bias1.read_all(**_read_param)).reshape(3, 1)
+                        results2[:, i] = np.array(bias2.read_all(**_read_param)).reshape(3, 1)
+                        progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tCold load:")
+                except KeyboardInterrupt:
+                    print("")
+                    plt.close('all')
+                    bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+                    print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
+                    continue
+                vc1, ic1, pc1 = results1[:, results1[0, :].argsort()]
+                vc2, ic2, pc2 = results2[:, results2[0, :].argsort()]
+
+                # Interpolate to common voltage
+                vb_min = max(vh1.min(), vc1.min(), vh2.min(), vc2.min())
+                vb_max = min(vh1.max(), vc1.max(), vh2.max(), vc2.max())
+                v = np.linspace(vb_min, vb_max, npts)
+                ih1 = np.interp(v, vh1, ih1)
+                ih2 = np.interp(v, vh2, ih2)
+                ic1 = np.interp(v, vc1, ic1)
+                ic2 = np.interp(v, vc2, ic2)
+                ph1 = np.interp(v, vh1, ph1)
+                ph2 = np.interp(v, vh2, ph2)
+                pc1 = np.interp(v, vc1, pc1)
+                pc2 = np.interp(v, vc2, pc2)
+                vh1, vc1 = v.copy(), v.copy()
+                vh2, vc2 = v.copy(), v.copy()
+
+                # Calculate noise temperature
+                yfac1 = ph1 / pc1
+                yfac2 = ph2 / pc2
+                tn1 = (THOT - yfac1 * TCOLD) / (yfac1 - 1)
+                tn2 = (THOT - yfac2 * TCOLD) / (yfac2 - 1)
+                tn1[tn1 < 0] = 1e10
+                tn2[tn2 < 0] = 1e10
+                gain1 = (ph1 - pc1) / (THOT - TCOLD)
+                gain2 = (ph2 - pc2) / (THOT - TCOLD)
+
+                voltage[j, :] = v.copy()
+                tn[j, 0, :] = tn1.copy()
+                tn[j, 1, :] = tn2.copy()
+                gain[j, 0, :] = gain1.copy()
+                gain[j, 1, :] = gain2.copy()
+
+            # Find best noise temperature values
+            tn1_min, tn2_min = 1e10, 1e10
+            vb1_best, vb2_best = None, None
+            bf1_best, bf2_best = None, None
+            for i in range(npts_b):
+                if tn[i, 0, :].min() < tn1_min:
+                    tn1_min = tn[i, 0, :].min()  # minimum T_n
+                    idx = tn[i, 0, :].argmin()
+                    vb1_best = voltage[i, idx]   # best bias
+                    bf1_best = bfield_currents[i] * 1000
+                if tn[i, 1, :].min() < tn2_min:
+                    tn2_min = tn[i, 1, :].min()  # minimum T_n
+                    idx = tn[i, 1, :].argmin()
+                    vb2_best = voltage[i, idx]
+                    bf2_best = bfield_currents[i] * 1000
+            print(f"\n\tBest values:")
+            print(f"\n\t\tChannel 1:")
+            print(f"\t\t\tNoise:    {tn1_min:.1f} K")
+            print(f"\t\t\tBias:     {vb1_best:.1f} mV")
+            print(f"\t\t\tB-field:  {bf1_best:.1f} mA\n")
+            print(f"\n\t\tChannel 2:")
+            print(f"\t\t\tNoise:    {tn2_min:.1f} K")
+            print(f"\t\t\tBias:     {vb2_best:.1f} mV")
+            print(f"\t\t\tB-field:  {bf2_best:.1f} mA\n")
+
+            # Plot I-V curve
+            fig1, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
+            for i in range(npts_b):
+                ax1.plot(voltage[i, :], tn[i, 0, :], label=f'{bfield_currents[i]*1000:.1f} mA')
+                ax3.plot(voltage[i, :], tn[i, 1, :], label=f'{bfield_currents[i]*1000:.1f} mA')
+            ax1.set_xlabel("Voltage (mV)")
+            ax3.set_xlabel("Voltage (mV)")
+            ax1.set_ylabel("Noise temperature (K)")
+            ax3.set_ylabel("Noise temperature (K)")
+            ax1.set_ylim([0, 300])
+            ax3.set_ylim([0, 300])
+            ax1.legend()
+            ax3.legend()
+
+            # Plot IF power
+            np.seterr(invalid='ignore')
+            for i in range(npts_b):
+                ax2.plot(voltage[i, :], 10*np.log10(gain[i, 0, :]), label=f'{bfield_currents[i]*1000:.1f} mA')
+                ax4.plot(voltage[i, :], 10*np.log10(gain[i, 1, :]), label=f'{bfield_currents[i]*1000:.1f} mA')
+            np.seterr(invalid='warn')
+            ax2.set_ylabel("Gain")
+            ax4.set_ylabel("Gain")
+            ax2.set_xlabel("Voltage (mV)")
+            ax4.set_xlabel("Voltage (mV)")
+            ax2.set_ylim([-15, 5])
+            ax4.set_ylim([-15, 5])
+            ax1.title.set_text("Channel 1")
+            ax2.title.set_text("Channel 2")
+            ax2.legend()
+            ax4.legend()
+
+            bias_voltages = np.array([5.5, 6, 6.7, 7])
+            noise_temperatures1 = np.zeros((npts_b, len(bias_voltages)))  # bfield, vbias
+            noise_temperatures2 = np.zeros((npts_b, len(bias_voltages)))
+            for i in range(npts_b):
+                for j, _vb in np.ndenumerate(bias_voltages):
+                    idx = np.abs(voltage[i] - _vb).argmin()
+                    noise_temperatures1[i, j] = tn[i, 0, idx]
+                    noise_temperatures2[i, j] = tn[i, 1, idx]
+            fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+            for j in range(len(bias_voltages)):
+                ax1.plot(bfield_currents*1000, noise_temperatures1[:, j], label=f"{bias_voltages[j]:.1f} mV")
+                ax2.plot(bfield_currents*1000, noise_temperatures2[:, j], label=f"{bias_voltages[j]:.1f} mV")
+            ax1.set_xlabel("B-field current (mA)")
+            ax2.set_xlabel("B-field current (mA)")
+            ax1.set_ylabel("Noise temperature (K)")
+            ax2.set_ylabel("Noise temperature (K)")
+            ax1.set_ylim([0, 300])
+            ax2.set_ylim([0, 300])
+            ax1.title.set_text("Channel 1")
+            ax2.title.set_text("Channel 1")
+            ax3.title.set_text("Channel 2")
+            ax4.title.set_text("Channel 2")
+            ax1.legend()
+            ax2.legend()
+
+            plt.show()
+
+            filename1 = ask_filename(msg="\tFile name: ")
+            if filename1 is None:
+                print("\n\tNot saving any data for channel 1.\n")
+            else:
+                # Save data
+                header = """Voltage 1 (mV), Voltage 2 (mV), Noise 1 (K), Noise 2 (K), Gain 1, Gain 2"""
+                np.savetxt(filename1 + ".dat", np.vstack((voltage[0], voltage[1], tn[0], tn[1], gain[0], gain[1])).T, header=header)
+                fig1.savefig(filename1 + ".png", dpi=600)
+                fig2.savefig(filename1 + "-bfield.png", dpi=600)
+                # Save metadata
+                with open(filename1 + ".mdat", "w") as fout:
+                    json.dump(param1, fout, indent=4)
+            
+            bfield_ps.set_current1(param1['ICOIL'] / 1000)
+            bfield_ps.set_current2(param2['ICOIL'] / 1000)
+            bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+            bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+            print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
+            print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
 
         # 2SB measurements ------------------------------------------------- #
 
@@ -1659,7 +2335,6 @@ try:
                 print("\n\tControl tone injection\n")
                 print("\tUsage: TONE <offset> <power>\n")
                 continue
-
             print("\n\tSET TONE FREQUENCY + POWER:\n")
 
             # arg 1: tone offset frequency
@@ -1703,7 +2378,7 @@ try:
             if_filter2.set_frequency(abs(tone_offset))
 
             # Set tone power
-            print(f"\t-> Tone power:     {power_dbm:7.3f} dBm")
+            print(f"\t-> Synth. power:   {power_dbm:7.3f} dBm")
             print(f"\t                   {10**(power_dbm/10):7.3f} mW\n")
             tone_synth.set_power(power_dbm, 'dbm')
 
@@ -1715,6 +2390,12 @@ try:
             _ = bias1.read_ifpower(average=2000, verbose=True, msg="\tIF power (channel 1)")
             _ = bias2.read_ifpower(average=2000, verbose=True, msg="\tIF power (channel 2)")
 
+        # TONE: Control tone injection
+        elif command[0] == "TONEOFF":
+
+            print("\n\tTONE POWER OFF\n")
+            tone_synth.power_off()
+
         # IRR: Measure image rejection ratio
         elif command[0] == "IRR":
 
@@ -1723,7 +2404,6 @@ try:
                 print("\n\tMeasure image rejection ratio\n")
                 print("\tUsage: IRR\n")
                 continue
-
             print("\n\tMEASURE IMAGE REJECTION RATIO:\n")
 
             # Debugging settings
@@ -1767,7 +2447,7 @@ try:
             # Get local oscillator frequency
             local_oscillator = param1['FREQ']
             assert local_oscillator == param2['FREQ']
-            if local_oscillator != 0:
+            if local_oscillator == 0:
                 print('Local oscillator frequency not specified')
                 continue
 
@@ -1777,18 +2457,20 @@ try:
             npts = len(tone_sweep)
 
             print(f"\t-> LO frequency: {local_oscillator:5.1f} GHz\n")
-            print(f"\t-> Tone offset:  {tone_start:4.2f} to {tone_stop:4.2f} GHz, {tone_step:4.2f} GHz step ({npts} points)\n")
+            print(f"\t-> Tone offset:  {tone_start:4.2f} to {tone_stop:4.2f} GHz, " + 
+                  f"{tone_step:4.2f} GHz step ({npts} points)\n")
 
-            # Inject USB tone (M_U in Kerr 2001)
+            # Inject USB tone
             print("\t-> Measuring upper sideband ratio (M_USB)...")
             p1usb, p2usb = np.zeros(npts), np.zeros(npts)
+            synth_power_usb = np.zeros(npts)
             for i, tone_offset in np.ndenumerate(tone_sweep):
                 # Setup tone
-                tone_synth_power = -5  # starting power (dBm)
+                tone_synth_power = -4.1  # starting power (dBm)
                 tone_synth_freq = (local_oscillator + tone_offset) / tone_fmult
                 tone_synth.set_power(tone_synth_power, 'dbm')
                 tone_synth.set_frequency(tone_synth_freq)
-                tone_synth.power_on()
+                tone_synth.power_off()
                 if verbose:
                     print(f"\t\tTone offset: {tone_offset:.2f} GHz")
                 else:
@@ -1800,10 +2482,14 @@ try:
                 # Wait extra long if it's first step
                 if i[0] == 0:
                     time.sleep(5)
+                # Measure background IF power
+                _p1_bg, _p2_bg = _read_if_power_pm(bias1, bias2, average)
+                tone_synth.power_on()
+                time.sleep(0.1)
                 # Optimize synth power
                 _ifpower = bias2.read_ifpower(average=100, offset_only=True)
-                while _ifpower < 0.7:
-                    tone_synth_power += 0.1
+                while _ifpower < 0.7:  # max IF power (don't saturate power meter!)
+                    tone_synth_power += 0.1  # power step = 0.1 dBm
                     if tone_synth_power >= 3:  # don't go above 3 dBm
                         break
                     tone_synth.set_power(tone_synth_power, 'dbm')
@@ -1811,8 +2497,12 @@ try:
                     _ifpower = bias2.read_ifpower(average=100, offset_only=True)
                     if verbose:
                         print(f"\t\t\t{tone_synth_power:.1f} dBm -> {_ifpower*10:.3f} AU")
+                synth_power_usb[i] = tone_synth_power
                 # Measure IF power
-                p1usb[i], p2usb[i] = _read_if_power(bias1, bias2, average)
+                p1usb[i], p2usb[i] = _read_if_power_pm(bias1, bias2, average)
+                # Subtract background
+                p1usb[i] -= _p1_bg
+                p2usb[i] -= _p2_bg
                 # Print info
                 if verbose:
                     print(f"\t\tResults: ", end="")
@@ -1824,15 +2514,16 @@ try:
             # Inject LSB tone (M_L in Kerr 2001)
             print("\t-> Measuring lower sideband ratio (M_LSB)...")
             p1lsb, p2lsb = np.zeros(npts), np.zeros(npts)
+            synth_power_lsb = np.zeros(npts)
             for i, tone_offset in np.ndenumerate(tone_sweep):
                 # Setup tone
-                tone_synth_power = -5  # starting power (dBm)
+                tone_synth_power = -4.1  # starting power (dBm)
                 tone_synth_freq = (local_oscillator - tone_offset) / tone_fmult
                 tone_synth.set_power(tone_synth_power, 'dbm')
                 tone_synth.set_frequency(tone_synth_freq)
-                tone_synth.power_on()
+                tone_synth.power_off()
                 if verbose:
-                    print(f"\t\tTone offset: {-tone_offset:.2f} GHz ({i[0]} / {npts})")  # debug
+                    print(f"\t\tTone offset: {-tone_offset:.2f} GHz ({i[0]+1} / {npts})")  # debug
                 else:
                     progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
                 # Setup IF filters
@@ -1842,19 +2533,27 @@ try:
                 # Wait extra long if it's first step
                 if i[0] == 0:
                     time.sleep(5)
+                # Measure background IF power
+                _p1_bg, _p2_bg = _read_if_power_pm(bias1, bias2, average)
+                tone_synth.power_on()
+                time.sleep(0.1)
                 # Optimize synth power
                 _ifpower = bias1.read_ifpower(average=100, offset_only=True)
-                while _ifpower < 0.7:
-                    tone_synth_power += 0.1
-                    if tone_synth_power >= 3:  # don't go above 3 dBm
+                while _ifpower < 0.7:  # max IF power (don't saturate power meter!)
+                    tone_synth_power += 0.1  # power step = 0.1 dBm
+                    if tone_synth_power > 3:  # don't go above 3 dBm
                         break
                     tone_synth.set_power(tone_synth_power, 'dbm')
                     time.sleep(0.1)
                     _ifpower = bias1.read_ifpower(average=100, offset_only=True)
                     if verbose:
                         print(f"\t\t\t{tone_synth_power:.1f} dBm -> {_ifpower * 10:.3f} AU")
+                synth_power_lsb[i] = tone_synth_power
                 # Measure IF power
-                p1lsb[i], p2lsb[i] = _read_if_power(bias1, bias2, average)
+                p1lsb[i], p2lsb[i] = _read_if_power_pm(bias1, bias2, average)
+                # Subtract background
+                p1lsb[i] -= _p1_bg
+                p2lsb[i] -= _p2_bg
                 # Print info
                 if verbose:
                     print(f"\t\tResults: ", end="")
@@ -1865,6 +2564,16 @@ try:
 
             # Turn tone off
             tone_synth.power_off()
+
+            # Ratio between output powers (M_U and M_L in Kerr 2001)
+            # Note: channel 1 is our LSB channel and
+            #       channel 2 is our USB channel (opposite of Kerr 2001)
+            m_lsb = p1lsb / p2lsb  # eqn 2 Kerr 2001 (LSB tone)
+            m_usb = p2usb / p1usb  # eqn 1 Kerr 2001 (USB tone)
+
+            print("")
+            print(f"\t-> Output ratios:         {10 * np.mean(np.log10(m_usb)):5.1f} dB  -> M_USB")
+            print(f"\t                          {10 * np.mean(np.log10(m_lsb)):5.1f} dB  -> M_LSB\n")
 
             # Cold load
             print("\t-> Measuring cold load...")
@@ -1881,7 +2590,7 @@ try:
                 else:
                     time.sleep(sleep_time)
                 # Measure IF power
-                p1c[i], p2c[i] = _read_if_power(bias1, bias2, average)
+                p1c[i], p2c[i] = _read_if_power_pm(bias1, bias2, average)
 
             # Hot load
             print("\t-> Measuring hot load...")
@@ -1898,46 +2607,44 @@ try:
                 else:
                     time.sleep(sleep_time)
                 # Measure IF power
-                p1h[i], p2h[i] = _read_if_power(bias1, bias2, average)
+                p1h[i], p2h[i] = _read_if_power_pm(bias1, bias2, average)
 
             # Return to cold load
             bias2.cold_load()
 
-            # Ratio between outputs
-            m_usb = abs(p2usb - p2c) / abs(p1usb - p1c)  # eqn 1
-            m_lsb = abs(p1lsb - p1c) / abs(p2lsb - p2c)  # eqn 2
-
-            # DSB noise temperature
-            with np.errstate(divide='ignore',invalid='ignore'):
-                yfac1 = p1h / p1c
-                yfac2 = p2h / p2c
-            t_dsb1 = (295 - yfac1 * 78) / (yfac1 - 1)
-            t_dsb2 = (295 - yfac2 * 78) / (yfac2 - 1)
-
             # DSB gain ratio (M_DSB in Kerr 2001)
-            delta_p1 = p1h - p1c  # eqn 3a
-            delta_p2 = p2h - p2c  # eqn 3b
-            with np.errstate(divide='ignore',invalid='ignore'):
-                m_dsb = delta_p2 / delta_p1  # eqn 4 (USB / LSB)
+            # Delta_P: the change in IF power when we go from cold -> hot
+            delta_p1 = p1h - p1c  # eqn 3a Kerr 2001
+            delta_p2 = p2h - p2c  # eqn 3b Kerr 2001
+            with np.errstate(divide='ignore', invalid='ignore'):
+                m_dsb = delta_p1 / delta_p2  # eqn 4 Kerr 2001
 
             # Image rejection ratio (R_1 and R_2 in Kerr 2001)
-            gain_factor = (m_lsb * m_dsb - 1) / (m_usb - m_dsb)
-            r_1 = m_lsb / gain_factor  # LSB
-            r_2 = m_usb * gain_factor  # USB
+            gain_factor = (m_lsb - m_dsb) / (m_dsb * m_usb - 1)  # g_1usb
+            r_lsb = m_lsb / gain_factor  # eqn 12 Kerr 2001 (LSB)
+            r_usb = m_usb * gain_factor  # eqn 11 Kerr 2001 (USB)
+
+            # DSB noise temperature
+            with np.errstate(divide='ignore', invalid='ignore'):
+                yfac1 = p1h / p1c
+                yfac2 = p2h / p2c
+            t_dsb1 = (THOT - yfac1 * TCOLD) / (yfac1 - 1)  # DSB noise of LSB channel (ch 1)
+            t_dsb2 = (THOT - yfac2 * TCOLD) / (yfac2 - 1)  # DSB noise of USB channel (ch 2)
 
             # SSB noise temperature
-            t_usb = t_dsb2 * (1 + 1 / r_2)
-            t_lsb = t_dsb1 * (1 + 1 / r_1)
+            t_lsb = t_dsb1 * (1 + 1 / r_lsb)  # LSB channel
+            t_usb = t_dsb2 * (1 + 1 / r_usb)  # USB channel
 
             # Debugging plots
             if debug:
-                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15,5))
-                ax1.plot(tone_sweep, p1h, 'r',   label="Channel 1: hot")
-                ax1.plot(tone_sweep, p1c, 'b',   label="Channel 1: cold")
-                ax1.plot(tone_sweep, p2h, 'r--', label="Channel 2: hot")
-                ax1.plot(tone_sweep, p2c, 'b--', label="Channel 2: cold")
+                _, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+                ax1.semilogy(tone_sweep, p1h, 'r',   label="Channel 1: hot")
+                ax1.semilogy(tone_sweep, p1c, 'b',   label="Channel 1: cold")
+                ax1.semilogy(tone_sweep, p2h, 'r--', label="Channel 2: hot")
+                ax1.semilogy(tone_sweep, p2c, 'b--', label="Channel 2: cold")
                 ax1.set_xlabel("IF frequency (GHz)")
                 ax1.set_ylabel("IF power (K)")
+                # ax1.set_ylim(ymin=1)
                 ax1.legend()
                 ax2.plot(tone_sweep, t_dsb1, 'b', label="Channel 1 (LSB)")
                 ax2.plot(tone_sweep, t_dsb2, 'r', label="Channel 2 (USB)")
@@ -1950,10 +2657,17 @@ try:
                 ax3.legend()
                 plt.title("Hot / cold load measurements")
 
-                fig, ((ax3, ax4, ax5), (ax1, ax2, ax6)) = plt.subplots(2, 3, figsize=(15,8))
-                ax1.plot(tone_sweep, p1c*10, 'k--', label="Channel 1: baseline")
+                plt.figure(figsize=(6, 5))
+                plt.plot(tone_sweep, synth_power_usb, 'r', label="USB")
+                plt.plot(tone_sweep, synth_power_lsb, 'b', label="LSB")
+                plt.axhline(3, c='k', ls='--', label="Max allowed")
+                plt.axhline(-4, c='k', ls=':', label="Starting point")
+                plt.xlabel("IF frequency (GHz)")
+                plt.ylabel("Synth. power (dBm)")
+                plt.legend(title="Synth. power (Hittite)")
+
+                _, ((ax3, ax4, ax5), (ax1, ax2, ax6)) = plt.subplots(2, 3, figsize=(15, 8))
                 ax1.plot(tone_sweep, p1usb*10, 'b', label="Channel 1: with USB tone")
-                ax2.plot(tone_sweep, p2c*10, 'k--', label="Channel 2: baseline")
                 ax2.plot(tone_sweep, p2usb*10, 'r', label="Channel 2: with USB tone")
                 ax1.set_xlabel("Tone offset frequency (GHz)")
                 ax2.set_xlabel("IF frequency (GHz)")
@@ -1963,9 +2677,7 @@ try:
                 ax2.set_ylim([0, 25])
                 ax1.legend(loc=1, frameon=True, framealpha=1)
                 ax2.legend(loc=1, frameon=True, framealpha=1)
-                ax3.plot(tone_sweep, p1c*10, 'k--', label="Channel 1: baseline")
                 ax3.plot(tone_sweep, p1lsb*10, 'b', label="Channel 1: with LSB tone")
-                ax4.plot(tone_sweep, p2c*10, 'k--', label="Channel 2: baseline")
                 ax4.plot(tone_sweep, p2lsb*10, 'r', label="Channel 2: with LSB tone")
                 ax3.set_xlabel("Tone offset frequency (GHz)")
                 ax4.set_xlabel("IF frequency (GHz)")
@@ -1975,8 +2687,8 @@ try:
                 ax4.set_ylim([0, 25])
                 ax3.legend(loc=1, frameon=True, framealpha=1)
                 ax4.legend(loc=1, frameon=True, framealpha=1)
-                ax5.plot(tone_sweep, 10*np.log10(m_lsb), 'b', label=r"$M_{LSB}$")
-                ax6.plot(tone_sweep, 10*np.log10(m_usb), 'r', label=r"$M_{USB}$")
+                ax5.plot(tone_sweep, 10 * np.log10(m_lsb), 'b', label=r"$M_{LSB}$")
+                ax6.plot(tone_sweep, 10 * np.log10(m_usb), 'r', label=r"$M_{USB}$")
                 ax5.set_xlabel("IF frequency (GHz)")
                 ax6.set_xlabel("IF frequency (GHz)")
                 ax5.set_ylabel(r"LSB Ratio $M_{LSB}$ (dB)")
@@ -1986,9 +2698,9 @@ try:
                 ax5.legend(loc=1, frameon=True, framealpha=1)
                 ax6.legend(loc=1, frameon=True, framealpha=1)
 
-                plt.figure(figsize=(6,5))
-                plt.plot(tone_sweep, 10*np.log10(m_lsb), 'b', label=r"$M_{LSB}$")
-                plt.plot(tone_sweep, 10*np.log10(m_usb), 'r', label=r"$M_{USB}$")
+                plt.figure(figsize=(6, 5))
+                plt.plot(tone_sweep, 10 * np.log10(m_lsb), 'b', label=r"$M_{LSB}$")
+                plt.plot(tone_sweep, 10 * np.log10(m_usb), 'r', label=r"$M_{USB}$")
                 plt.plot(tone_sweep, 10*np.log10(m_dsb), 'g', label=r"$M_{DSB}$")
                 plt.plot(tone_sweep, 10*np.log10(gain_factor), 'k--', label=r"Gain factor")
                 plt.xlabel("IF frequency (GHz)")
@@ -1997,31 +2709,29 @@ try:
 
             # Results plot
             if plot:
-                fig, (ax2, ax1) = plt.subplots(1, 2, figsize=(12,5))
-                ax1.plot(-tone_sweep, 10*np.log10(r_1),   'b',   label="R_LSB")
-                ax1.plot(-tone_sweep, 10*np.log10(m_lsb), 'b--', label="M_LSB", alpha=0.5)
-                ax1.plot( tone_sweep, 10*np.log10(r_2),   'r',   label="R_USB")
-                ax1.plot( tone_sweep, 10*np.log10(m_usb), 'r--', label="M_USB", alpha=0.5)
+                fig, (ax2, ax1) = plt.subplots(1, 2, figsize=(12, 5))
+                ax1.plot(-tone_sweep, 10 * np.log10(r_usb), 'b', label="R_LSB")
+                ax1.plot(-tone_sweep, 10 * np.log10(m_lsb), 'b--', label="M_LSB", alpha=0.5)
+                ax1.plot(tone_sweep, 10 * np.log10(r_lsb), 'r', label="R_USB")
+                ax1.plot(tone_sweep, 10 * np.log10(m_usb), 'r--', label="M_USB", alpha=0.5)
                 ax1.set_xlabel("Tone offset frequency (GHz)")
                 ax1.set_ylabel("Rejection ratio (dB)")
                 ax1.set_ylim(ymin=0)
                 ax1.legend()
                 ax2.plot(-tone_sweep, t_lsb, 'b', label="LSB")
-                ax2.plot( tone_sweep, t_usb, 'r', label="USB")
+                ax2.plot(tone_sweep, t_usb, 'r', label="USB")
                 ax2.set_xlabel("Tone offset frequency (GHz)")
                 ax2.set_ylabel("Noise temperature (K)")
                 ax2.set_ylim(ymin=0)
                 ax2.legend()
-        
+
+            print(f"\t-> Image rejection ratio: {10*np.mean(np.log10(r_usb)):5.1f} dB  -> R_1 or R_USB")
+            print(f"\t                          {10*np.mean(np.log10(r_lsb)):5.1f} dB  -> R_2 or R_LSB")
             print("")
-            print(f"\t-> Output ratios:         {10*np.log10(np.mean(m_lsb)):5.1f} dB (LSB)")
-            print(f"\t                          {10*np.log10(np.mean(m_usb)):5.1f} dB (USB)")
-            print("")
-            print(f"\t-> Image rejection ratio: {10*np.log10(np.mean(r_1)):5.1f} dB (LSB)")
-            print(f"\t                          {10*np.log10(np.mean(r_2)):5.1f} dB (USB)")
-            print("")
-            print(f"\t-> Noise temperatures:    {np.mean(t_lsb):5.1f} K (LSB)")
-            print(f"\t                          {np.mean(t_usb):5.1f} K (USB)")
+            print(f"\t-> Noise temperatures:    {np.mean(t_dsb1):5.1f} K  -> T_DSB, ch1")
+            print(f"\t                          {np.mean(t_dsb2):5.1f} K  -> T_DSB, ch2\n")
+            print(f"\t                          {np.mean(t_usb):5.1f} K  -> T_SSB, USB")
+            print(f"\t                          {np.mean(t_lsb):5.1f} K  -> T_SSB, LSB")
             print(f"\n\t\t\t** mean values **")
 
             plt.show()
@@ -2031,11 +2741,654 @@ try:
                 print("\tNot saving any data.\n")
             else:
                 # Save data
-                header = "Offset frequency (GHz), T_LSB (K), T_USB (K), R_LSB, R_USB, M_LSB, M_USB, M_DSB, P1H, P1C, P2H, P2C"
-                results = np.vstack((tone_sweep, t_lsb, t_usb, r_1, r_2, m_lsb, m_usb, m_dsb, p1h, p1c, p2h, p2c)).T
+                header = """Offset frequency (GHz), T_LSB (K), T_USB (K), \
+                R_LSB, R_USB, M_LSB, M_USB, M_DSB, P1H, P1C, P2H, P2C"""
+                results = np.vstack((tone_sweep, t_lsb, t_usb, r_usb, r_lsb, m_lsb, m_usb, m_dsb, p1h, p1c, p2h, p2c)).T
                 np.savetxt(filename + ".dat", results, header=header)
                 if plot:
                     fig.savefig(filename + ".png")
+
+        # IRRSA: Measure image rejection ratio
+        elif command[0] == "IRRSA":
+
+            # Print help
+            if len(command) == 2 and command[1].upper() == "H":
+                print("\n\tMeasure image rejection ratio using spectrum analyzer\n")
+                print("\tUsage: IRRSA\n")
+                continue
+            print("\n\tMEASURE IMAGE REJECTION RATIO (WITH SPECTRUM ANALYZER):\n")
+
+            # Debugging settings
+            debug = True    # everything useful for debugging
+            plot = True     # final results
+            verbose = True  # plot detailed info
+
+            # How to measure IF power?
+            use_sa = True   # spectrum analyzer
+            use_pm = False  # power meter + YIG filter
+
+            # arg 1: start frequency, GHz
+            if len(command) > 1:
+                tone_start = float(command[1])
+            else:
+                tone_start = 6
+
+            # arg 2: stop frequency, GHz
+            if len(command) > 2:
+                tone_stop = float(command[2])
+            else:
+                tone_stop = 8
+
+            # arg 3: frequency step, GHz
+            if len(command) > 3:
+                tone_step = float(command[3])
+            else:
+                tone_step = 1
+
+            # arg 4: averaging (spectrum analyzer)
+            if len(command) > 4:
+                average = int(command[4])
+            else:
+                average = 50
+
+            # arg 5: sleep time, in s
+            if len(command) > 5:
+                sleep_time = float(command[5])
+            else:
+                sleep_time = 0.5
+
+            # Setup
+            bias2.cold_load()
+            tone_synth.power_off()
+
+            # Get local oscillator frequency
+            local_oscillator = param1['FREQ']
+            param2['FREQ'] = local_oscillator
+            if local_oscillator == 0:
+                print('Local oscillator frequency not specified')
+                continue
+            print(f"\t-> LO frequency: {local_oscillator:5.1f} GHz\n")
+
+            # Tone parameters
+            tone_fmult = 9  # frequency multiplication of LO chain used for tone
+            tone_sweep = np.arange(tone_start, tone_stop + 1e-10, tone_step)  # GHz
+            f_sweep = np.linspace(tone_start, tone_stop, 10_001) * 1e9  # Hz
+            f_step = f_sweep[1] - f_sweep[0]
+            npts = len(tone_sweep)
+            print(f"\t-> Tone sweep:  {tone_start:4.2f} to {tone_stop:4.2f} GHz, " + 
+                  f"{tone_step:4.2f} GHz step ({npts} points)\n")
+
+            # Cold load
+            print("\t-> Measuring cold load...")
+            bias2.cold_load()
+            bias2.relay_off()
+            time.sleep(1)
+            if use_pm:
+                time.sleep(4)
+                p1c_pm, p2c_pm = np.zeros_like(tone_sweep), np.zeros_like(tone_sweep)
+                for i, tone_offset in np.ndenumerate(tone_sweep):
+                    progress_bar(i[0]+1, npts, prefix='\t\tProgress: ', suffix='', length=50)
+                    # Setup IF filters
+                    if_filter1.set_frequency(abs(tone_offset))
+                    if_filter2.set_frequency(abs(tone_offset))
+                    # Wait for power meter to settle
+                    time.sleep(sleep_time)
+                    # Measure IF power
+                    p1c_pm[i], p2c_pm[i] = _read_if_power_pm(bias1, bias2, average)
+            if use_sa:
+                print("\n\t\tChannel 1:\n")
+                bias2.relay_off()
+                time.sleep(0.1)
+                p1c_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None)
+                print("\n\t\tChannel 2:\n")
+                bias2.relay_on()
+                time.sleep(0.1)
+                p2c_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None, reset=False)
+                print("")
+
+            # Hot load
+            print("\t-> Measuring hot load...")
+            bias2.hot_load()
+            bias2.relay_off()
+            time.sleep(1)
+            if use_pm:
+                time.sleep(4)
+                p1h_pm, p2h_pm = np.zeros_like(tone_sweep), np.zeros_like(tone_sweep)
+                for i, tone_offset in np.ndenumerate(tone_sweep):
+                    progress_bar(i[0]+1, npts, prefix='\t\tProgress: ', suffix='', length=50)
+                    # Setup IF filters
+                    if_filter1.set_frequency(abs(tone_offset))
+                    if_filter2.set_frequency(abs(tone_offset))
+                    # Wait for power meter to settle
+                    time.sleep(sleep_time)
+                    # Measure IF power
+                    p1h_pm[i], p2h_pm[i] = _read_if_power_pm(bias1, bias2, average)
+            if use_sa:
+                print("\n\t\tChannel 1:\n")
+                bias2.relay_off()
+                time.sleep(0.1)
+                p1h_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None, reset=False)
+                print("\n\t\tChannel 2:\n")
+                bias2.relay_on()
+                time.sleep(0.1)
+                p2h_sa_dbm = _read_if_power_thermal_sa(speca, f_sweep, avg=average, gauss_width=None, reset=False)
+                print("")
+
+            # Spectrum analyzer: dBm -> W
+            if use_sa:
+                # Smooth to an effective RBW of 25 MHz (same as power meter approach)
+                gauss_width = 25e6 / f_step
+                p1h_sa = gauss_conv(10 ** (p1h_sa_dbm / 10) * 1e-3, gauss_width)
+                p1c_sa = gauss_conv(10 ** (p1c_sa_dbm / 10) * 1e-3, gauss_width)
+                p2h_sa = gauss_conv(10 ** (p2h_sa_dbm / 10) * 1e-3, gauss_width)
+                p2c_sa = gauss_conv(10 ** (p2c_sa_dbm / 10) * 1e-3, gauss_width)
+                # Interpolate to tone sweep
+                p1h_sa = np.interp(tone_sweep*1e9, f_sweep, p1h_sa)
+                p1c_sa = np.interp(tone_sweep*1e9, f_sweep, p1c_sa)
+                p2h_sa = np.interp(tone_sweep*1e9, f_sweep, p2h_sa)
+                p2c_sa = np.interp(tone_sweep*1e9, f_sweep, p2c_sa)
+
+            # DSB gain ratio (M_DSB in Kerr 2001)
+            # Delta_P: the change in IF power when we go from cold -> hot
+            if use_pm:
+                delta_p1_pm = p1h_pm - p1c_pm  # eqn 3a Kerr 2001
+                delta_p2_pm = p2h_pm - p2c_pm  # eqn 3b Kerr 2001
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    m_dsb_pm = delta_p1_pm / delta_p2_pm  # eqn 4 Kerr 2001
+            if use_sa:
+                delta_p1_sa = p1h_sa - p1c_sa  # eqn 3a Kerr 2001
+                delta_p2_sa = p2h_sa - p2c_sa  # eqn 3b Kerr 2001
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    m_dsb_sa = delta_p1_sa / delta_p2_sa  # eqn 4 Kerr 2001
+
+            # DSB noise temperature
+            with np.errstate(divide='ignore', invalid='ignore'):
+                if use_pm:
+                    yfac1_pm = p1h_pm / p1c_pm
+                    yfac2_pm = p2h_pm / p2c_pm
+                if use_sa:
+                    yfac1_sa = p1h_sa / p1c_sa
+                    yfac2_sa = p2h_sa / p2c_sa
+            if use_pm:
+                t_dsb1_pm = (THOT - yfac1_pm * TCOLD) / (yfac1_pm - 1)  # DSB noise of LSB channel (ch 1)
+                t_dsb2_pm = (THOT - yfac2_pm * TCOLD) / (yfac2_pm - 1)  # DSB noise of USB channel (ch 2)
+                print(f"\n\t-> DSB noise temperature (from power meter):\n")
+                print(f"  \t\tChannel 1:  {np.mean(t_dsb1_pm):5.1f} K")
+                print(f"  \t\tChannel 2:  {np.mean(t_dsb2_pm):5.1f} K\n")
+            if use_sa:
+                t_dsb1_sa = (THOT - yfac1_sa * TCOLD) / (yfac1_sa - 1)  # DSB noise of LSB channel (ch 1)
+                t_dsb2_sa = (THOT - yfac2_sa * TCOLD) / (yfac2_sa - 1)  # DSB noise of USB channel (ch 2)
+                print(f"\n\t-> DSB noise temperature (from spectrum analyzer):\n")
+                print(f"  \t\tChannel 1:  {np.mean(t_dsb1_sa):5.1f} K")
+                print(f"  \t\tChannel 2:  {np.mean(t_dsb2_sa):5.1f} K\n")
+
+            # Return to cold load
+            bias2.cold_load()
+            bias2.relay_off()
+
+            # Inject USB tone
+            print("\t-> Measuring upper sideband ratio (M_USB)...")
+            synth_power_usb = np.zeros(npts)
+            # Measure with YIG filter + power meter
+            if use_pm:
+                p1usb_pm, p2usb_pm = np.zeros(npts), np.zeros(npts)
+                for i, tone_offset in np.ndenumerate(tone_sweep):
+                    # Print
+                    if verbose:
+                        print(f"\t\tTone offset: {tone_offset:.2f} GHz ({i[0]+1} / {npts})")  # debug
+                    else:
+                        progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
+                    # Setup tone
+                    tone_synth_power = -4.1  # starting power (dBm)
+                    tone_synth_freq = (local_oscillator + tone_offset) / tone_fmult
+                    tone_synth.set_power(tone_synth_power, 'dbm')
+                    tone_synth.set_frequency(tone_synth_freq)
+                    tone_synth.power_off()
+                    # Setup IF filters
+                    if_filter1.set_frequency(abs(tone_offset))
+                    if_filter2.set_frequency(abs(tone_offset))
+                    time.sleep(sleep_time)
+                    # Wait extra long if it's first step
+                    if i[0] == 0:
+                        time.sleep(5)
+                    # Measure background IF power
+                    _p1_bg_pm, _p2_bg_pm = _read_if_power_pm(bias1, bias2, average)
+                    tone_synth.power_on()
+                    time.sleep(0.1)
+                    # Optimize synth power
+                    _ifpower = bias1.read_ifpower(average=100, offset_only=True)
+                    while _ifpower < 0.8:  # max IF power (don't saturate power meter!)
+                        tone_synth_power += 0.1  # power step = 0.1 dBm
+                        if tone_synth_power >= 3:  # don't go above 3 dBm
+                            break
+                        tone_synth.set_power(tone_synth_power, 'dbm')
+                        time.sleep(0.1)
+                        _ifpower = bias1.read_ifpower(average=100, offset_only=True)
+                        if verbose:
+                            print(f"\t\t\t{tone_synth_power:4.1f} dBm -> {_ifpower*10:6.3f} AU")
+                    synth_power_usb[i] = tone_synth_power
+                    # Measure IF power
+                    p1usb_pm[i], p2usb_pm[i] = _read_if_power_pm(bias1, bias2, average)
+                    # Signal-to-noise ratio
+                    snr1_pm = 10*np.log10(p1usb_pm[i] / _p1_bg_pm)
+                    snr2_pm = 10*np.log10(p2usb_pm[i] / _p2_bg_pm)
+                    # Subtract background
+                    p1usb_pm[i] -= _p1_bg_pm
+                    p2usb_pm[i] -= _p2_bg_pm
+                # Print info
+                if verbose:
+                    print(f"\n\t\tPower meter results:       ", end="")
+                    print(f"P1={p1usb_pm[i] * 10:7.3f} AU, P2={p2usb_pm[i] * 10:7.3f} AU, ", end="")
+                    print(f"M_USB={10*np.log10(p1usb_pm[i]/p2usb_pm[i]):5.1f} dB, ", end="")
+                    print(f"SNR={snr1_pm:5.1f} dB / {snr2_pm:5.1f} dB")
+            # Measure with spectrum analyzer
+            if use_sa:
+                p1usb_sa, p2usb_sa = np.zeros(npts), np.zeros(npts)
+                # Detune IF filters to protect power meter
+                if_filter1.set_frequency(20)
+                if_filter2.set_frequency(20)
+                # Sweep IF tone frequency
+                for i, tone_offset in np.ndenumerate(tone_sweep):
+                    # Print
+                    if verbose:
+                        print(f"\t\tTone offset: {tone_offset:.2f} GHz ({i[0]+1} / {npts})")  # debug
+                    else:
+                        progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
+                    # Setup tone
+                    tone_synth.power_off()
+                    tone_synth_freq = (local_oscillator + tone_offset) / tone_fmult
+                    tone_synth.set_frequency(tone_synth_freq)
+                    if use_pm:
+                        tone_synth_power = synth_power_usb[i]
+                    else:
+                        tone_synth_power = -1
+                    # Measure IF power
+                    good = False
+                    first = True
+                    while not good:
+                        if first:
+                            first = False
+                        else:
+                            tone_synth_power += 1
+                        tone_synth.set_power(tone_synth_power, 'dbm')
+                        tone_synth.power_on()
+                        bias2.relay_off()
+                        time.sleep(0.1)
+                        p1usb_sa[i], snr1_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
+                        bias2.relay_on()
+                        time.sleep(0.1)
+                        p2usb_sa[i], snr2_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
+                        bias2.relay_off()
+                        good = (snr1_sa >= 10) & (snr2_sa >= 10)
+                        if tone_synth_power >= 2:
+                            good = True
+                        # Print info
+                        if verbose:
+                            print(f"\t\tSpectrum analyzer results: ", end="")
+                            print(f"P1={p1usb_sa[i]*1e6:7.3f} uW, P2={p2usb_sa[i]*1e6:7.3f} uW, ", end="")
+                            if p1usb_sa[i]/p2usb_sa[i] >= 0:
+                                print(f"M_USB={10*np.log10(p1usb_sa[i]/p2usb_sa[i]):5.1f} dB, ", end="")
+                            print(f"SNR={snr1_sa:5.1f} dB / {snr2_sa:5.1f} dB")
+
+            # Inject LSB tone
+            print("\t-> Measuring lower sideband ratio (M_LSB)...")
+            synth_power_lsb = np.zeros(npts)
+            # Measure with YIG filter + power meter
+            if use_pm:
+                p1lsb_pm, p2lsb_pm = np.zeros(npts), np.zeros(npts)
+                for i, tone_offset in np.ndenumerate(tone_sweep):
+                    # Print
+                    if verbose:
+                        print(f"\t\tTone offset: {tone_offset:.2f} GHz ({i[0]+1} / {npts})")  # debug
+                    else:
+                        progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
+                    # Setup tone
+                    tone_synth_power = -4.1  # starting power (dBm)
+                    tone_synth_freq = (local_oscillator - tone_offset) / tone_fmult
+                    tone_synth.set_power(tone_synth_power, 'dbm')
+                    tone_synth.set_frequency(tone_synth_freq)
+                    tone_synth.power_off()
+                    # Setup IF filters
+                    if_filter1.set_frequency(abs(tone_offset))
+                    if_filter2.set_frequency(abs(tone_offset))
+                    time.sleep(sleep_time)
+                    # Wait extra long if it's first step
+                    if i[0] == 0:
+                        time.sleep(5)
+                    # Measure background IF power
+                    _p1_bg_pm, _p2_bg_pm = _read_if_power_pm(bias1, bias2, average)
+                    tone_synth.power_on()
+                    time.sleep(0.1)
+                    # Optimize synth power
+                    _ifpower = bias2.read_ifpower(average=100, offset_only=True)
+                    while _ifpower < 0.8:  # max IF power (don't saturate power meter!)
+                        tone_synth_power += 0.1  # power step = 0.1 dBm
+                        if tone_synth_power >= 3:  # don't go above 3 dBm
+                            break
+                        tone_synth.set_power(tone_synth_power, 'dbm')
+                        time.sleep(0.1)
+                        _ifpower = bias2.read_ifpower(average=100, offset_only=True)
+                        if verbose:
+                            print(f"\t\t\t{tone_synth_power:4.1f} dBm -> {_ifpower*10:6.3f} AU")
+                    synth_power_lsb[i] = tone_synth_power
+                    # Measure IF power
+                    p1lsb_pm[i], p2lsb_pm[i] = _read_if_power_pm(bias1, bias2, average)
+                    # Signal-to-noise ratio
+                    snr1_pm = 10*np.log10(p1lsb_pm[i] / _p1_bg_pm)
+                    snr2_pm = 10*np.log10(p2lsb_pm[i] / _p2_bg_pm)
+                    # Subtract background
+                    p1lsb_pm[i] -= _p1_bg_pm
+                    p2lsb_pm[i] -= _p2_bg_pm
+                # Print info
+                if verbose:
+                    print(f"\n\t\tPower meter results:       ", end="")
+                    print(f"P1={p1lsb_pm[i] * 10:7.3f} AU, P2={p2lsb_pm[i] * 10:7.3f} AU, ", end="")
+                    print(f"M_LSB={10*np.log10(p2lsb_pm[i]/p1lsb_pm[i]):5.1f} dB, ", end="")
+                    print(f"SNR={snr1_pm:5.1f} dB / {snr2_pm:5.1f} dB")
+            # Measure with spectrum analyzer
+            if use_sa:
+                p1lsb_sa, p2lsb_sa = np.zeros(npts), np.zeros(npts)
+                # Detune IF filters to protect power meter
+                if_filter1.set_frequency(20)
+                if_filter2.set_frequency(20)
+                # Sweep IF tone frequency
+                for i, tone_offset in np.ndenumerate(tone_sweep):
+                    # Print
+                    if verbose:
+                        print(f"\t\tTone offset: {tone_offset:.2f} GHz ({i[0]+1} / {npts})")  # debug
+                    else:
+                        progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
+                    # Setup tone
+                    tone_synth.power_off()
+                    tone_synth_freq = (local_oscillator - tone_offset) / tone_fmult
+                    tone_synth.set_frequency(tone_synth_freq)
+                    if use_pm:
+                        tone_synth_power = synth_power_lsb[i]
+                    else:
+                        tone_synth_power = -1
+                    # Measure IF power
+                    good = False
+                    first = True
+                    while not good:
+                        if first:
+                            first = False
+                        else:
+                            tone_synth_power += 1
+                        tone_synth.set_power(tone_synth_power, 'dbm')
+                        tone_synth.power_on()
+                        bias2.relay_off()
+                        time.sleep(0.1)
+                        p1lsb_sa[i], snr1_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
+                        bias2.relay_on()
+                        time.sleep(0.1)
+                        p2lsb_sa[i], snr2_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
+                        bias2.relay_off()
+                        good = (snr1_sa >= 10) & (snr2_sa >= 10)
+                        if tone_synth_power >= 2:
+                            good = True
+                        # Print info
+                        if verbose:
+                            print(f"\t\tSpectrum analyzer results: ", end="")
+                            print(f"P1={p1lsb_sa[i]*1e6:7.3f} uW, P2={p2lsb_sa[i]*1e6:7.3f} uW, ", end="")
+                            if p1usb_sa[i]/p2usb_sa[i] >= 0:
+                                print(f"M_LSB={10*np.log10(p1usb_sa[i]/p2usb_sa[i]):5.1f} dB, ", end="")
+                            print(f"SNR={snr1_sa:5.1f} dB / {snr2_sa:5.1f} dB")
+
+            # Return to normal values
+            bias2.cold_load()
+            bias2.relay_off()
+            tone_synth.power_off()
+            if_filter1.set_frequency(param1['IFFREQ'])
+            if_filter2.set_frequency(param2['IFFREQ'])
+
+            # Ratio between output powers (M_U and M_L in Kerr 2001)
+            if use_pm:
+                m_usb_pm = p1usb_pm / p2usb_pm  # eqn 1 Kerr 2001 (USB tone)
+                m_lsb_pm = p2lsb_pm / p1lsb_pm  # eqn 2 Kerr 2001 (LSB tone)
+                # Note: channel 1 is our LSB channel and
+                #       channel 2 is our USB channel (opposite of Kerr 2001)
+                # m_usb_pm = p2usb_pm / p1usb_pm  # eqn 1 Kerr 2001 (USB tone)
+                # m_lsb_pm = p1lsb_pm / p2lsb_pm  # eqn 2 Kerr 2001 (LSB tone)
+                print(f"\n\t-> Output ratio (from power meter):\n")
+                if m_usb_pm.min() >= 0:
+                    print(f"\t\tM_USB:  {10 * np.mean(np.log10(m_usb_pm)):5.1f} dB")
+                if m_lsb_pm.min() >= 0:
+                    print(f"\t\tM_LSB:  {10 * np.mean(np.log10(m_lsb_pm)):5.1f} dB")
+            if use_sa:
+                m_usb_sa = p1usb_sa / p2usb_sa  # eqn 1 Kerr 2001 (USB tone)
+                m_lsb_sa = p2lsb_sa / p1lsb_sa  # eqn 2 Kerr 2001 (LSB tone)
+                # Note: channel 1 is our LSB channel and
+                #       channel 2 is our USB channel (opposite of Kerr 2001)
+                # m_usb_sa = p2usb_sa / p1usb_sa  # eqn 1 Kerr 2001 (USB tone)
+                # m_lsb_sa = p1lsb_sa / p2lsb_sa  # eqn 2 Kerr 2001 (LSB tone)
+                print(f"\n\t-> Output ratio (from spectrum analyzer):\n")
+                if m_usb_sa.min() >= 0:
+                    print(f"\t\tM_USB:  {10 * np.mean(np.log10(m_usb_sa)):5.1f} dB")
+                if m_lsb_sa.min() >= 0:
+                    print(f"\t\tM_LSB:  {10 * np.mean(np.log10(m_lsb_sa)):5.1f} dB")
+
+            # Image rejection ratio (R_1 and R_2 in Kerr 2001)
+            if use_pm:
+                gain_factor_pm = (m_lsb_pm * m_dsb_pm - 1) / (m_usb_pm - m_dsb_pm)
+                r_usb_pm = m_usb_pm * gain_factor_pm  # eqn 11 Kerr 2001 (USB)
+                r_lsb_pm = m_lsb_pm / gain_factor_pm  # eqn 12 Kerr 2001 (LSB)
+                # gain_factor_pm = (m_lsb_pm - m_dsb_pm) / (m_dsb_pm * m_usb_pm - 1)  # g_1usb
+                # r_usb_pm = m_usb_pm * gain_factor_pm  # eqn 11 Kerr 2001 (USB)
+                # r_lsb_pm = m_lsb_pm / gain_factor_pm  # eqn 12 Kerr 2001 (LSB)
+            if use_sa:
+                gain_factor_sa = (m_lsb_sa * m_dsb_sa - 1) / (m_usb_sa - m_dsb_sa)
+                r_usb_sa = m_usb_sa * gain_factor_sa  # eqn 11 Kerr 2001 (USB)
+                r_lsb_sa = m_lsb_sa / gain_factor_sa  # eqn 12 Kerr 2001 (LSB)
+                # gain_factor_sa = (m_lsb_sa - m_dsb_sa) / (m_dsb_sa * m_usb_sa - 1)  # g_1usb
+                # r_usb_sa = m_usb_sa * gain_factor_sa  # eqn 11 Kerr 2001 (USB)
+                # r_lsb_sa = m_lsb_sa / gain_factor_sa  # eqn 12 Kerr 2001 (LSB)
+
+            # SSB noise temperature
+            if use_pm:
+                t_usb_pm = t_dsb1_pm * (1 + 1 / r_usb_pm)  # USB channel
+                t_lsb_pm = t_dsb2_pm * (1 + 1 / r_lsb_pm)  # LSB channel
+                # t_usb_pm = t_dsb2_pm * (1 + 1 / r_usb_pm)  # USB channel
+                # t_lsb_pm = t_dsb1_pm * (1 + 1 / r_lsb_pm)  # LSB channel
+            if use_sa:
+                t_usb_sa = t_dsb1_sa * (1 + 1 / r_usb_sa)  # USB channel
+                t_lsb_sa = t_dsb2_sa * (1 + 1 / r_lsb_sa)  # LSB channel
+                # t_usb_sa = t_dsb2_sa * (1 + 1 / r_usb_sa)  # USB channel
+                # t_lsb_sa = t_dsb1_sa * (1 + 1 / r_lsb_sa)  # LSB channel
+
+            # Debugging plots
+            if debug:
+                if use_pm:
+                    fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(12, 8))
+                    fig.subplots_adjust(hspace=0)
+                    ax1.semilogy(tone_sweep, p1h_pm, 'r',   label="Channel 1: hot")
+                    ax1.semilogy(tone_sweep, p1c_pm, 'b',   label="Channel 1: cold")
+                    ax1.semilogy(tone_sweep, p2h_pm, 'r--', label="Channel 2: hot")
+                    ax1.semilogy(tone_sweep, p2c_pm, 'b--', label="Channel 2: cold")
+                    ax2.plot(tone_sweep, t_dsb1_pm, 'b', label="Channel 1 (LSB)")
+                    ax2.plot(tone_sweep, t_dsb2_pm, 'r', label="Channel 2 (USB)")
+                    ax3.plot(tone_sweep, m_dsb_pm, 'k', label=r"$M_{DSB}$")
+                    ax1.set_ylabel("IF power (K)")
+                    ax2.set_ylabel("DSB noise temperature (K)")
+                    ax3.set_ylabel(r"DSB ratio $M_{DSB}$")
+                    ax3.set_xlabel("IF frequency (GHz)")
+                    ax1.set_xlim([tone_sweep.min(), tone_sweep.max()])
+                    ax2.set_xlim([tone_sweep.min(), tone_sweep.max()])
+                    ax3.set_xlim([tone_sweep.min(), tone_sweep.max()])
+                    ax2.set_ylim([0, 500])
+                    ax1.legend()
+                    ax2.legend()
+                    ax3.legend()
+                    ax1.set_title("Power meter: hot / cold load measurements")
+
+                if use_sa:
+                    fig, (ax1, ax2, ax3) = plt.subplots(3, figsize=(12, 8))
+                    fig.subplots_adjust(hspace=0)
+                    ax1.semilogy(tone_sweep, p1h_sa, 'r',   label="Channel 1: hot")
+                    ax1.semilogy(tone_sweep, p1c_sa, 'b',   label="Channel 1: cold")
+                    ax1.semilogy(tone_sweep, p2h_sa, 'r--', label="Channel 2: hot")
+                    ax1.semilogy(tone_sweep, p2c_sa, 'b--', label="Channel 2: cold")
+                    ax2.plot(tone_sweep, t_dsb1_sa, 'b', label="Channel 1 (LSB)")
+                    ax2.plot(tone_sweep, t_dsb2_sa, 'r', label="Channel 2 (USB)")
+                    ax3.plot(tone_sweep, m_dsb_sa, 'k', label=r"$M_{DSB}$")
+                    ax1.set_ylabel("IF power (K)")
+                    ax2.set_ylabel("DSB noise temperature (K)")
+                    ax3.set_ylabel(r"DSB ratio $M_{DSB}$")
+                    ax3.set_xlabel("IF frequency (GHz)")
+                    ax1.set_xlim([tone_sweep.min(), tone_sweep.max()])
+                    ax2.set_xlim([tone_sweep.min(), tone_sweep.max()])
+                    ax3.set_xlim([tone_sweep.min(), tone_sweep.max()])
+                    ax2.set_ylim([0, 500])
+                    ax1.legend()
+                    ax2.legend()
+                    ax3.legend()
+                    ax1.set_title("Spectum analyzer: hot / cold load measurements")
+
+                if use_pm:
+                    plt.figure(figsize=(6, 5))
+                    plt.plot(tone_sweep, synth_power_usb, 'r', label="USB")
+                    plt.plot(tone_sweep, synth_power_lsb, 'b', label="LSB")
+                    plt.axhline(3, c='k', ls='--', label="Max allowed")
+                    plt.axhline(-4, c='k', ls=':', label="Starting point")
+                    plt.xlabel("IF frequency (GHz)")
+                    plt.ylabel("Synth. power (dBm)")
+                    plt.legend(title="Synth. power (Hittite)")
+
+                if use_pm:
+                    _, ((ax3, ax4, ax5), (ax1, ax2, ax6)) = plt.subplots(2, 3, figsize=(15, 8))
+                    ax1.plot(tone_sweep, p1usb_pm*10, 'b', label="Channel 1: with USB tone")
+                    ax2.plot(tone_sweep, p2usb_pm*10, 'r', label="Channel 2: with USB tone")
+                    ax1.set_xlabel("Tone offset frequency (GHz)")
+                    ax2.set_xlabel("IF frequency (GHz)")
+                    ax1.set_ylabel("IF power (uW)")
+                    ax2.set_ylabel("IF power (uW)")
+                    ax1.set_ylim([0, 25])
+                    ax2.set_ylim([0, 25])
+                    ax1.legend(loc=1, frameon=True, framealpha=1)
+                    ax2.legend(loc=1, frameon=True, framealpha=1)
+                    ax3.plot(tone_sweep, p1lsb_pm*10, 'b', label="Channel 1: with LSB tone")
+                    ax4.plot(tone_sweep, p2lsb_pm*10, 'r', label="Channel 2: with LSB tone")
+                    ax3.set_xlabel("Tone offset frequency (GHz)")
+                    ax4.set_xlabel("IF frequency (GHz)")
+                    ax3.set_ylabel("IF power (uW)")
+                    ax4.set_ylabel("IF power (uW)")
+                    ax3.set_ylim([0, 25])
+                    ax4.set_ylim([0, 25])
+                    ax3.legend(loc=1, frameon=True, framealpha=1)
+                    ax4.legend(loc=1, frameon=True, framealpha=1)
+                    ax5.plot(tone_sweep, 10 * np.log10(m_lsb_pm), 'b', label=r"$M_{LSB}$")
+                    ax6.plot(tone_sweep, 10 * np.log10(m_usb_pm), 'r', label=r"$M_{USB}$")
+                    ax5.set_xlabel("IF frequency (GHz)")
+                    ax6.set_xlabel("IF frequency (GHz)")
+                    ax5.set_ylabel(r"LSB Ratio $M_{LSB}$ (dB)")
+                    ax6.set_ylabel(r"USB Ratio $M_{USB}$ (dB)")
+                    ax5.set_ylim([0, 30])
+                    ax6.set_ylim([0, 30])
+                    ax5.legend(loc=1, frameon=True, framealpha=1)
+                    ax6.legend(loc=1, frameon=True, framealpha=1)
+                    plt.title("Power meter: tone injection")
+
+                if use_pm:
+                    plt.figure(figsize=(6, 5))
+                    plt.plot(tone_sweep, 10 * np.log10(m_lsb_pm), 'b', label=r"$M_{LSB}$")
+                    plt.plot(tone_sweep, 10 * np.log10(m_usb_pm), 'r', label=r"$M_{USB}$")
+                    plt.plot(tone_sweep, 10*np.log10(m_dsb_pm), 'g', label=r"$M_{DSB}$")
+                    plt.plot(tone_sweep, 10*np.log10(gain_factor_pm), 'k--', label=r"Gain factor")
+                    plt.xlabel("IF frequency (GHz)")
+                    plt.ylabel("Magnitude (dB)")
+                    plt.legend()
+                    plt.title("Power meter: gain ratios")
+
+                if use_sa:
+                    plt.figure(figsize=(6, 5))
+                    mask = m_lsb_sa > 0
+                    plt.plot(tone_sweep[mask], 10 * np.log10(m_lsb_sa[mask]), 'b', label=r"$M_{LSB}$")
+                    mask = m_usb_sa > 0
+                    plt.plot(tone_sweep[mask], 10 * np.log10(m_usb_sa[mask]), 'r', label=r"$M_{USB}$")
+                    mask = m_dsb_sa > 0
+                    plt.plot(tone_sweep[mask], 10*np.log10(m_dsb_sa[mask]), 'g', label=r"$M_{DSB}$")
+                    mask = gain_factor_sa > 0
+                    plt.plot(tone_sweep[mask], 10*np.log10(gain_factor_sa[mask]), 'k--', label=r"Gain factor")
+                    plt.xlabel("IF frequency (GHz)")
+                    plt.ylabel("Magnitude (dB)")
+                    plt.legend()
+                    plt.title("Spectrum analyzer: gain ratios")
+
+            # Results plot
+            if plot:
+                fig, (ax2, ax1) = plt.subplots(1, 2, figsize=(12, 5))
+                if use_pm:
+                    mask = r_usb_pm > 0
+                    ax1.plot(-tone_sweep[mask], 10 * np.log10(r_usb_pm[mask]), 'b', label="LSB (PM)")
+                    mask = r_lsb_pm > 0
+                    ax1.plot( tone_sweep[mask], 10 * np.log10(r_lsb_pm[mask]), 'r', label="USB (PM)")
+                if use_sa:
+                    mask = r_usb_sa > 0
+                    ax1.plot(-tone_sweep[mask], 10 * np.log10(r_usb_sa[mask]), 'b--', label="LSB (SA)")
+                    mask = r_lsb_sa > 0
+                    ax1.plot( tone_sweep[mask], 10 * np.log10(r_lsb_sa[mask]), 'r--', label="USB (SA)")
+                ax1.set_xlabel("Tone offset frequency (GHz)")
+                ax1.set_ylabel("Rejection ratio (dB)")
+                ax1.set_ylim(ymin=0)
+                ax1.legend(title="Rejection")
+                if use_pm:
+                    ax2.plot(-tone_sweep, t_lsb_pm, 'b', label="LSB (PM)")
+                    ax2.plot( tone_sweep, t_usb_pm, 'r', label="USB (PM)")
+                if use_sa:
+                    ax2.plot(-tone_sweep, t_lsb_sa, 'b--', label="LSB (SA)")
+                    ax2.plot( tone_sweep, t_usb_sa, 'r--', label="USB (SA)")
+                ax2.set_xlabel("Tone offset frequency (GHz)")
+                ax2.set_ylabel("Noise temperature (K)")
+                ax2.set_ylim(ymin=0)
+                ax2.legend(title="Noise")
+
+            if use_pm:
+                print(f"\n\t-> Results (from power meter):\n")
+                print(f"  \t-> Image rejection ratio:")
+                if r_usb_pm.min() >= 0:
+                    print(f"  \t\tR_USB:  {10*np.mean(np.log10(r_usb_pm)):5.1f} dB")
+                if r_lsb_pm.min() >= 0:
+                    print(f"  \t\tR_LSB:  {10*np.mean(np.log10(r_lsb_pm)):5.1f} dB")
+                print(f"\n\t-> Noise temperatures:")
+                print(f"  \t\tT_USB:  {np.mean(t_usb_pm):5.1f} K")
+                print(f"  \t\tT_LSB:  {np.mean(t_lsb_pm):5.1f} K")
+            if use_sa:
+                print(f"\n\t-> Results (from spectrum analyzer):\n")
+                print(f"  \t-> Image rejection ratio:")
+                if r_usb_sa.min() >= 0:
+                    print(f"  \t\tR_USB:  {10*np.mean(np.log10(r_usb_sa)):5.1f} dB")
+                if r_lsb_sa.min() >= 0:
+                    print(f"  \t\tR_LSB:  {10*np.mean(np.log10(r_lsb_sa)):5.1f} dB")
+                print(f"\n\t-> Noise temperatures:")
+                print(f"  \t\tT_USB:  {np.mean(t_usb_sa):5.1f} K")
+                print(f"  \t\tT_LSB:  {np.mean(t_lsb_sa):5.1f} K")
+
+            print("")
+            plt.show()
+
+            if use_pm:
+                filename = ask_filename(msg="\tFile name (for power meter data): ")
+                if filename is None:
+                    print("\tNot saving any data.\n")
+                else:
+                    # Save data
+                    header = """Offset frequency (GHz), T_LSB (K), T_USB (K), \
+                    R_LSB, R_USB, M_LSB, M_USB, M_DSB, P1H, P1C, P2H, P2C"""
+                    results = np.vstack((tone_sweep, t_lsb_pm, t_usb_pm, r_usb_pm, r_lsb_pm, m_lsb_pm, m_usb_pm, m_dsb_pm, p1h_pm, p1c_pm, p2h_pm, p2c_pm)).T
+                    np.savetxt(filename + ".dat", results, header=header)
+                    if plot:
+                        fig.savefig(filename + ".png")
+            if use_sa:
+                filename = ask_filename(msg="\tFile name (for spectrum analyzer data): ")
+                if filename is None:
+                    print("\tNot saving any data.\n")
+                else:
+                    # Save data
+                    header = """Offset frequency (GHz), T_LSB (K), T_USB (K), \
+                    R_LSB, R_USB, M_LSB, M_USB, M_DSB, P1H, P1C, P2H, P2C"""
+                    results = np.vstack((tone_sweep, t_lsb_sa, t_usb_sa, r_usb_sa, r_lsb_sa, m_lsb_sa, m_usb_sa, m_dsb_sa, p1h_sa, p1c_sa, p2h_sa, p2c_sa)).T
+                    np.savetxt(filename + ".dat", results, header=header)
+                    if plot:
+                        fig.savefig(filename + ".png")
 
         # Misc measurements ------------------------------------------------ #
 
@@ -2048,7 +3401,6 @@ try:
                 print("\tUsage: CONST <npts>")
                 print("\twhere <npts> is the number of sample points (default is 50,000)\n")
                 continue
-
             print("\n\tCONSTANT CONTROL VOLTAGE:\n")
 
             # arg 1: number of sample points
@@ -2065,7 +3417,8 @@ try:
                 print("\tNot any saving data.\n")
             else:
                 # Save data
-                header = "Time, Voltage 1 (mV), Current 1 (uA), IF Power 1 (K), Voltage 2 (mV), Current 2 (uA), IF Power 2 (K)"
+                header = """Time, Voltage 1 (mV), Current 1 (uA), \
+                IF Power 1 (K), Voltage 2 (mV), Current 2 (uA), IF Power 2 (K)"""
                 np.savetxt(filename + ".dat", results, header=header)
 
         # RESISTANCE: Fit resistance of I-V curve
@@ -2076,7 +3429,6 @@ try:
                 print("\n\tMeasure the resistance of the I-V curve\n")
                 print("\tUsage: R\n")
                 continue
-
             print("\n\tMEASURE RESISTANCE:")
 
             # Parameters
@@ -2131,6 +3483,14 @@ try:
         # COLD: move load to cold position
         elif command[0] == "COLD":
             bias2.cold_load()
+
+        # RELAY
+        elif command[0] == "RELAY":
+
+            if command[1].upper() == "ON":
+                bias2.relay_on()
+            elif command[1].upper() == "OFF":
+                bias2.relay_off()
 
         # Misc functions --------------------------------------------------- #
 
@@ -2189,9 +3549,15 @@ finally:
         bias2.save_cal()
         bias2.save_config()
 
+        bias2.hot_load()
+        bias2.relay_off()
+
     if tone_synth is not None:
         tone_synth.set_power(0, 'dbm')
         tone_synth.power_off()
+
+    if bfield_ps:
+        bfield_ps.close()
 
     try:
         print("")
@@ -2199,8 +3565,8 @@ finally:
         print("")
         bias2.set_control_voltage(0, verbose=True)
         print("")
-        bias1.close()
-        bias2.close()
+        # bias1.close()
+        # bias2.close()
 
     except (NameError, AttributeError, uldaq.ul_exception.ULException) as e:
         pass
