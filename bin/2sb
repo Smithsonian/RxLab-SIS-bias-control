@@ -846,8 +846,12 @@ try:
                     plt.pause(0.0001)
                     fig.canvas.flush_events()
 
-                except KeyboardInterrupt:  # TODO: other errors to catch??
+                except KeyboardInterrupt:
                     plt.close('all')
+                    bias1.ao_device.scan_stop()
+                    bias2.ao_device.scan_stop()
+                    bias1.ai_device.scan_stop()
+                    bias2.ai_device.scan_stop()
                     bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
                     bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
                     print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")

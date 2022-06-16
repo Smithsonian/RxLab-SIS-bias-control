@@ -56,7 +56,7 @@ class SISBias:
             print("\tRun \"sisbias-init-config-v0\" or \"sisbias-init-config-v3\" to initialize this file.\n")
             raise e
 
-        # Read calibration file file
+        # Read calibration file
         self.cal_file = cal_file
         if self.cal_file is None:
             self.cal_file = user_config_dir("rxlab-sis-bias.cal")
@@ -1051,6 +1051,8 @@ class SISBias:
 
             except KeyboardInterrupt:
                 plt.close('all')
+                self.ao_device.scan_stop()
+                self.ai_device.scan_stop()
                 self.set_control_voltage(vctrl)
                 print(f"\n\tControl voltage returned to {vctrl:.2f} V.\n")
                 break
