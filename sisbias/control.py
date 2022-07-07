@@ -831,7 +831,8 @@ class SISBias:
         if verbose:
             if bias2:
                 print("\n\tChannel 1:")
-            print(f"\n\t\tR_normal:       {rnormal:7.2f} ohms")
+            print(f"\n\t\tNum. junctions: {njunc:.0f}")
+            print(f"  \t\tR_normal:       {rnormal:7.2f} ohms")
             print(f"  \t\tV_intercept:    {v_intercept:7.2f} mV")
             print(f"  \t\tG_mismatch:     {gmismatch:7.2f}")
             print(f"\n\t\tIF noise:       {if_noise:7.2f} K uncorrected")
@@ -859,7 +860,8 @@ class SISBias:
             if_noise2_corr = (if_noise2 - 1.3) * gmismatch2  # K
             if verbose:
                 print("\n\tChannel 2:")
-                print(f"\n\t\tR_normal:       {rnormal2:7.2f} ohms")
+                print(f"\n\t\tNum. junctions: {njunc:.0f}")
+                print(f"  \t\tR_normal:       {rnormal2:7.2f} ohms")
                 print(f"  \t\tV_intercept:    {v_intercept2:7.2f} mV")
                 print(f"  \t\tG_mismatch:     {gmismatch2:7.2f}")
                 print(f"\n\t\tIF noise:       {if_noise2:7.2f} K uncorrected")
