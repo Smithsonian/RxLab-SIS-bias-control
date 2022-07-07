@@ -2463,6 +2463,7 @@ try:
 
             # Tone parameters
             tone_fmult = 9  # frequency multiplication of LO chain used for tone
+            # tone_fmult = 12  # frequency multiplication of LO chain used for tone
             tone_sweep = np.arange(tone_start, tone_stop + 1e-10, tone_step)  # GHz
             f_sweep = np.linspace(tone_start, tone_stop, 10_001) * 1e9  # Hz
             f_step = f_sweep[1] - f_sweep[0]
@@ -2565,14 +2566,14 @@ try:
                 t_dsb1_pm = (THOT - yfac1_pm * TCOLD) / (yfac1_pm - 1)  # DSB noise of LSB channel (ch 1)
                 t_dsb2_pm = (THOT - yfac2_pm * TCOLD) / (yfac2_pm - 1)  # DSB noise of USB channel (ch 2)
                 print(f"\n\t-> DSB noise temperature (from power meter):\n")
-                print(f"  \t\tChannel 1:  {np.mean(t_dsb1_pm):5.1f} K")
-                print(f"  \t\tChannel 2:  {np.mean(t_dsb2_pm):5.1f} K\n")
+                print(f"  \t\tChannel 1:  {np.median(t_dsb1_pm):5.1f} K")
+                print(f"  \t\tChannel 2:  {np.median(t_dsb2_pm):5.1f} K\n")
             if use_sa:
                 t_dsb1_sa = (THOT - yfac1_sa * TCOLD) / (yfac1_sa - 1)  # DSB noise of LSB channel (ch 1)
                 t_dsb2_sa = (THOT - yfac2_sa * TCOLD) / (yfac2_sa - 1)  # DSB noise of USB channel (ch 2)
                 print(f"\n\t-> DSB noise temperature (from spectrum analyzer):\n")
-                print(f"  \t\tChannel 1:  {np.mean(t_dsb1_sa):5.1f} K")
-                print(f"  \t\tChannel 2:  {np.mean(t_dsb2_sa):5.1f} K\n")
+                print(f"  \t\tChannel 1:  {np.median(t_dsb1_sa):5.1f} K")
+                print(f"  \t\tChannel 2:  {np.median(t_dsb2_sa):5.1f} K\n")
 
             # Return to cold load
             bias2.cold_load()
@@ -2671,7 +2672,7 @@ try:
                         time.sleep(0.1)
                         p2usb_sa[i], snr2_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
                         bias2.relay_off()
-                        good = (snr1_sa >= 10) & (snr2_sa >= 10)
+                        good = (snr1_sa >= 3) & (snr2_sa >= 3)
                         if tone_synth_power >= 2:
                             good = True
                         # Print info
@@ -2775,15 +2776,15 @@ try:
                         time.sleep(0.1)
                         p2lsb_sa[i], snr2_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
                         bias2.relay_off()
-                        good = (snr1_sa >= 10) & (snr2_sa >= 10)
+                        good = (snr1_sa >= 3) & (snr2_sa >= 3)
                         if tone_synth_power >= 2:
                             good = True
                         # Print info
                         if verbose:
                             print(f"\t\tSpectrum analyzer results: ", end="")
                             print(f"P1={p1lsb_sa[i]*1e6:7.3f} uW, P2={p2lsb_sa[i]*1e6:7.3f} uW, ", end="")
-                            if p1usb_sa[i]/p2usb_sa[i] >= 0:
-                                print(f"M_LSB={10*np.log10(p1usb_sa[i]/p2usb_sa[i]):5.1f} dB, ", end="")
+                            if p1lsb_sa[i]/p2lsb_sa[i] >= 0:
+                                print(f"M_LSB={10*np.log10(p1lsb_sa[i]/p2lsb_sa[i]):5.1f} dB, ", end="")
                             print(f"SNR={snr1_sa:5.1f} dB / {snr2_sa:5.1f} dB")
 
             # Return to normal values
@@ -3126,6 +3127,104 @@ try:
             print(f"\tResistance: {p1[0]:6.2f} +/- {perr1[0]:4.2f} ohms (channel 1)")
             print(f"\t            {p2[0]:6.2f} +/- {perr2[0]:4.2f} ohms (channel 2)\n")
 
+        # # B: Measure IV/IF as a function of B-field
+        # elif command[0] == "B":
+
+        #     # # Print help
+        #     # if len(command) == 2 and command[1].upper() == "H":
+        #     #     print("\n\tMeasure Y-factor (as a function of B-field)\n")
+        #     #     # print("\tUsage: YB <npts> <average> <sleeptime>")
+        #     #     # print("\twhere <npts> is the number of points (default 201)")
+        #     #     # print("\t      <average> is the averaging (default 64)")
+        #     #     # print("\t      <sleeptime> is the sleep time between points (default 0.1)\n")
+        #     #     continue
+        #     # print("\n\tMEASURE Y-FACTOR (SWEEP B-FIELD):")
+
+        #     # # arg 1: number of points
+        #     # if len(command) > 1:
+        #     #     npts = int(command[1])
+        #     # else:
+        #     #     npts = 201
+
+        #     # # arg 2: averaging
+        #     # if len(command) > 2:
+        #     #     average = int(command[2])
+        #     # else:
+        #     #     average = 64
+
+        #     # # arg 3: sleep time
+        #     # if len(command) > 3:
+        #     #     sleep_time = float(command[3])
+        #     # else:
+        #     #     sleep_time = 0.1
+
+        #     bfield_start = 0
+        #     bfield_stop = 150
+        #     bfield_step = 5
+
+        #     npts = 200
+        #     average = 100
+        #     sleep_time = 0.1
+
+        #     # Parameters
+        #     vmin, vmax, vlimit = param1["VMIN"], param1["VMAX"], param1["VLIMIT"]
+        #     vbmin, vbmax = vmin * 1000 / bias1.config['VMON']['GAIN'], vmax * 1000 / bias1.config['VMON']['GAIN']
+        #     vctrl_sweep = np.linspace(vmin, vmax, npts)
+        #     print(f"\n\tBias voltage sweep:    {vbmin:4.1f} to {vbmax:4.1f} mV")
+        #     print(f"  \tControl voltage sweep: {vmin:4.1f} to {vmax:4.1f} V\n")
+        #     print(f"  \tNumber of points: {npts}")
+        #     print(f"  \tAveraging: {average}")
+        #     print(f"  \tSleep time: {sleep_time:.1f} s")
+
+        #     _read_param = dict(average=average, stats=False, calibrate=True)
+            
+        #     bfield_currents = np.arange(bfield_start, bfield_stop + 1e-10, bfield_step) / 1000  # [A]
+        #     npts_b = len(bfield_currents)
+        #     voltage, current, ifpower = np.empty((npts_b, npts)), np.empty((npts_b, npts)), np.empty((npts_b, npts))
+        #     for j, bfield_current in np.ndenumerate(bfield_currents):
+
+        #         print(f"\n\tB-field = {bfield_current*1000:.1f} mA\n")
+
+        #         bfield_ps.set_current1(bfield_current)
+
+        #         # Sweep bias voltage and measure voltage / current / IF power
+        #         try:
+        #             for i, _vctrl in np.ndenumerate(vctrl_sweep):
+        #                 bias1.set_control_voltage(_vctrl, vlimit=param1['VLIMIT'])
+        #                 time.sleep(sleep_time)
+        #                 voltage[j, i], current[j, i], ifpower[j, i] = bias1.read_all(average=average)
+        #                 progress_bar(i[0] + 1, len(vctrl_sweep), prefix="\tProgress: ")
+        #         except KeyboardInterrupt:
+        #             print("")
+        #             plt.close('all')
+        #             bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+        #             print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.\n")
+        #             continue
+
+        #     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        #     for j in range(npts_b):
+        #         ax1.plot(voltage[j], current[j], label=f"{bfield_currents[j]*1000:.0f} mA")
+        #         ax2.plot(voltage[j], ifpower[j], label=f"{bfield_currents[j]*1000:.0f} mA")
+        #     ax1.set_xlabel("Voltage (mV)")
+        #     ax2.set_xlabel("Voltage (mV)")
+        #     ax1.set_ylabel("Current (mA)")
+        #     ax2.set_ylabel("IF Power (K)")
+        #     ax1.legend()
+        #     ax2.legend()
+
+        #     plt.show()
+
+        #     np.savetxt("voltage.txt", voltage)
+        #     np.savetxt("current.txt", current)
+        #     np.savetxt("ifpower.txt", ifpower)
+            
+        #     bfield_ps.set_current1(param1['ICOIL'] / 1000)
+        #     bfield_ps.set_current2(param2['ICOIL'] / 1000)
+        #     bias1.set_control_voltage(param1['VCTRL'], vlimit=param1['VLIMIT'])
+        #     bias2.set_control_voltage(param2['VCTRL'], vlimit=param2['VLIMIT'])
+        #     print(f"\n\tControl voltage (channel 1) returned to {param1['VCTRL']:.2f} V.")
+        #     print(f"\n\tControl voltage (channel 2) returned to {param2['VCTRL']:.2f} V.\n")
+
         # Digital input/output --------------------------------------------- #
 
         # HOT: move load to hot position
@@ -3208,8 +3307,8 @@ finally:
         tone_synth.set_power(0, 'dbm')
         tone_synth.power_off()
 
-    if bfield_ps:
-        bfield_ps.close()
+    # if bfield_ps:
+    #     bfield_ps.close()
 
     try:
         print("")
