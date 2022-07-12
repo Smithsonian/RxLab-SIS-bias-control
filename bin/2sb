@@ -1739,6 +1739,7 @@ try:
             ax3.legend(loc=1, frameon=True)
             ax3.set_ylim([0, 300])
             ax2.set_ylim(ymin=0)
+            ax2.grid(which="both")
             plt.show()
 
             filename1 = ask_filename(msg="\tFile name (channel 1): ")
@@ -2462,7 +2463,7 @@ try:
             print(f"\t-> LO frequency: {local_oscillator:5.1f} GHz\n")
 
             # Tone parameters
-            tone_fmult = 9  # frequency multiplication of LO chain used for tone
+            # tone_fmult = 9  # frequency multiplication of LO chain used for tone
             # tone_fmult = 12  # frequency multiplication of LO chain used for tone
             tone_sweep = np.arange(tone_start, tone_stop + 1e-10, tone_step)  # GHz
             f_sweep = np.linspace(tone_start, tone_stop, 10_001) * 1e9  # Hz
@@ -2593,7 +2594,10 @@ try:
                         progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
                     # Setup tone
                     tone_synth_power = -4.1  # starting power (dBm)
-                    tone_synth_freq = (local_oscillator + tone_offset) / tone_fmult
+                    if local_oscillator + tone_offset <= 360:
+                        tone_synth_freq = (local_oscillator + tone_offset) / 9
+                    else:
+                        tone_synth_freq = (local_oscillator + tone_offset) / 12
                     tone_synth.set_power(tone_synth_power, 'dbm')
                     tone_synth.set_frequency(tone_synth_freq)
                     tone_synth.power_off()
@@ -2649,12 +2653,15 @@ try:
                         progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
                     # Setup tone
                     tone_synth.power_off()
-                    tone_synth_freq = (local_oscillator + tone_offset) / tone_fmult
+                    if local_oscillator + tone_offset <= 360:
+                        tone_synth_freq = (local_oscillator + tone_offset) / 9
+                    else:
+                        tone_synth_freq = (local_oscillator + tone_offset) / 12
                     tone_synth.set_frequency(tone_synth_freq)
                     if use_pm:
                         tone_synth_power = synth_power_usb[i]
                     else:
-                        tone_synth_power = -1
+                        tone_synth_power = 0
                     # Measure IF power
                     good = False
                     first = True
@@ -2672,7 +2679,7 @@ try:
                         time.sleep(0.1)
                         p2usb_sa[i], snr2_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
                         bias2.relay_off()
-                        good = (snr1_sa >= 3) & (snr2_sa >= 3)
+                        good = (snr1_sa >= 6) & (snr2_sa >= 6)
                         if tone_synth_power >= 2:
                             good = True
                         # Print info
@@ -2697,7 +2704,10 @@ try:
                         progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
                     # Setup tone
                     tone_synth_power = -4.1  # starting power (dBm)
-                    tone_synth_freq = (local_oscillator - tone_offset) / tone_fmult
+                    if local_oscillator - tone_offset <= 360:
+                        tone_synth_freq = (local_oscillator - tone_offset) / 9
+                    else:
+                        tone_synth_freq = (local_oscillator - tone_offset) / 12
                     tone_synth.set_power(tone_synth_power, 'dbm')
                     tone_synth.set_frequency(tone_synth_freq)
                     tone_synth.power_off()
@@ -2753,12 +2763,15 @@ try:
                         progress_bar(i[0] + 1, npts, prefix='\t\tProgress: ', suffix='', length=50)
                     # Setup tone
                     tone_synth.power_off()
-                    tone_synth_freq = (local_oscillator - tone_offset) / tone_fmult
+                    if local_oscillator - tone_offset <= 360:
+                        tone_synth_freq = (local_oscillator - tone_offset) / 9
+                    else:
+                        tone_synth_freq = (local_oscillator - tone_offset) / 12
                     tone_synth.set_frequency(tone_synth_freq)
                     if use_pm:
                         tone_synth_power = synth_power_lsb[i]
                     else:
-                        tone_synth_power = -1
+                        tone_synth_power = 0
                     # Measure IF power
                     good = False
                     first = True
@@ -2776,7 +2789,7 @@ try:
                         time.sleep(0.1)
                         p2lsb_sa[i], snr2_sa = _read_if_power_tone_sa(speca, tone_offset * 1e9)
                         bias2.relay_off()
-                        good = (snr1_sa >= 3) & (snr2_sa >= 3)
+                        good = (snr1_sa >= 6) & (snr2_sa >= 6)
                         if tone_synth_power >= 2:
                             good = True
                         # Print info
@@ -2784,7 +2797,7 @@ try:
                             print(f"\t\tSpectrum analyzer results: ", end="")
                             print(f"P1={p1lsb_sa[i]*1e6:7.3f} uW, P2={p2lsb_sa[i]*1e6:7.3f} uW, ", end="")
                             if p1lsb_sa[i]/p2lsb_sa[i] >= 0:
-                                print(f"M_LSB={10*np.log10(p1lsb_sa[i]/p2lsb_sa[i]):5.1f} dB, ", end="")
+                                print(f"M_LSB={10*np.log10(p2lsb_sa[i]/p1lsb_sa[i]):5.1f} dB, ", end="")
                             print(f"SNR={snr1_sa:5.1f} dB / {snr2_sa:5.1f} dB")
 
             # Return to normal values
@@ -2991,7 +3004,8 @@ try:
                     ax2.plot( tone_sweep, t_usb_sa, 'r--', label="USB (SA)")
                 ax2.set_xlabel("Tone offset frequency (GHz)")
                 ax2.set_ylabel("Noise temperature (K)")
-                ax2.set_ylim(ymin=0)
+                ax2.set_ylim([0, 500])
+                ax1.set_ylim([0, 40])
                 ax2.legend(title="Noise")
 
             if use_pm:
